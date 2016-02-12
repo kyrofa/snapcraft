@@ -48,14 +48,6 @@ logger = logging.getLogger(__name__)
 
 class CatkinPlugin(snapcraft.BasePlugin):
 
-    _PLUGIN_STAGE_SOURCES = '''
-deb http://packages.ros.org/ros/ubuntu/ trusty main
-deb http://${prefix}.ubuntu.com/${suffix}/ trusty main universe
-deb http://${prefix}.ubuntu.com/${suffix}/ trusty-updates main universe
-deb http://${prefix}.ubuntu.com/${suffix}/ trusty-security main universe
-deb http://${security}.ubuntu.com/${suffix} trusty-security main universe
-'''
-
     @classmethod
     def schema(cls):
         schema = super().schema()
@@ -166,6 +158,16 @@ deb http://${security}.ubuntu.com/${suffix} trusty-security main universe
                 'Unable to find package path: "{}"'.format(
                     self._ros_package_path))
 
+        rosdep = _Rosdep(self.options.rosdistro, self._ros_package_path,
+                         os.path.join(self.partdir, 'rosdep'))
+        rosdep.setup()
+
+        # Parse the Catkin packages for extra dependencies
+        ros_dependencies = _find_extra_dependencies(rosdep,
+                                                    self.catkin_packages)
+
+        raise RuntimeError('Here: {}'.format(' '.join(ros_dependencies)))
+
         # Parse the Catkin packages to pull out their system dependencies
         system_dependencies = _find_system_dependencies(
             self.catkin_packages, self.options.rosdistro,
@@ -214,8 +216,8 @@ deb http://${security}.ubuntu.com/${suffix} trusty-security main universe
 
         super().build()
 
-        logger.info('Preparing to build Catkin packages...')
-        self._prepare_build()
+        #logger.info('Preparing to build Catkin packages...')
+        #self._prepare_build()
 
         logger.info('Building Catkin packages...')
         self._build_catkin_packages()
@@ -325,6 +327,20 @@ deb http://${security}.ubuntu.com/${suffix} trusty-security main universe
         self._run_in_bash(catkincmd)
 
 
+def _find_extra_dependencies(rosdep, catkin_packages):
+    dependencies = set()
+    for package in catkin_packages:
+        rosdep_dependencies = rosdep.get_dependencies(package)
+
+        for dependency in rosdep_dependencies:
+            if dependency in catkin_packages:
+                continue
+
+            dependencies.append(dependency)
+
+    return dependencies
+
+
 def _find_system_dependencies(catkin_packages, ros_distro, ros_package_path,
                               rosdep_path, ubuntu_sources):
     """Find system dependencies for a given set of Catkin packages."""
@@ -373,11 +389,9 @@ def _find_system_dependencies(catkin_packages, ros_distro, ros_package_path,
 
 
 class _Rosdep:
-    def __init__(self, ros_distro, ros_package_path, rosdep_path,
-                 ubuntu_sources):
+    def __init__(self, ros_distro, ros_package_path, rosdep_path):
         self._ros_distro = ros_distro
         self._ros_package_path = ros_package_path
-        self._ubuntu_sources = ubuntu_sources
         self._rosdep_path = rosdep_path
         self._rosdep_install_path = os.path.join(self._rosdep_path, 'install')
         self._rosdep_sources_path = os.path.join(self._rosdep_path,
@@ -398,10 +412,14 @@ class _Rosdep:
         # want to bloat the .snap more than necessary. So we'll unpack it
         # somewhere else, and use it from there.
         logger.info('Preparing to fetch rosdep...')
-        ubuntu = repo.Ubuntu(self._rosdep_path, sources=self._ubuntu_sources)
+        ubuntu = repo.Ubuntu(self._rosdep_path)
 
+        # rosdep in xenial requires python-rospkg, python-catkin-pkg, and
+        # python-rosdistro, but the .deb doesn't depend upon them, so we need
+        # to pull them all down here.
         logger.info('Fetching rosdep...')
-        ubuntu.get(['python-rosdep'])
+        ubuntu.get(['python-rosdep', 'python-rospkg', 'python-catkin-pkg',
+                    'python-rosdistro'])
 
         logger.info('Installing rosdep...')
         ubuntu.unpack(self._rosdep_install_path)
