@@ -336,7 +336,7 @@ def _find_extra_dependencies(rosdep, catkin_packages):
             if dependency in catkin_packages:
                 continue
 
-            dependencies.append(dependency)
+            dependencies.add(dependency)
 
     return dependencies
 
