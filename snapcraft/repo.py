@@ -127,7 +127,10 @@ class Ubuntu:
 
         for name in package_names:
             try:
-                self.apt_cache[name].mark_install()
+                # Since we unmark packages below, calling get() multiple times
+                # will result in consistency errors unless we simply disable
+                # the consistency check here with auto_fix=False.
+                self.apt_cache[name].mark_install(auto_fix=False)
             except KeyError:
                 raise PackageNotFoundError(name)
 

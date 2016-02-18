@@ -99,6 +99,9 @@ class CatkinPlugin(snapcraft.BasePlugin):
             raise RuntimeError(
                 'source-space cannot be the root of the Catkin workspace')
 
+        self._ros_source_path = os.path.join(self.partdir, 'ros', 'src')
+        self.options.include_roscore = True
+
     def env(self, root):
         """Runtime environment for ROS binaries and services."""
 
@@ -158,35 +161,55 @@ class CatkinPlugin(snapcraft.BasePlugin):
                 'Unable to find package path: "{}"'.format(
                     self._ros_package_path))
 
+        ubuntu_repo = repo.Ubuntu(os.path.join(self.partdir, 'ubuntu'))
+        ros_tools_path = os.path.join(self.partdir, 'ros_tools')
         rosdep = _Rosdep(self.options.rosdistro, self._ros_package_path,
-                         os.path.join(self.partdir, 'rosdep'))
+                         ubuntu_repo, ros_tools_path)
         rosdep.setup()
 
         # Parse the Catkin packages for extra dependencies
         ros_dependencies = _find_extra_dependencies(rosdep,
                                                     self.catkin_packages)
 
-        raise RuntimeError('Here: {}'.format(' '.join(ros_dependencies)))
+        if self.options.include_roscore:
+            ros_dependencies.add('ros_core')
 
-        # Parse the Catkin packages to pull out their system dependencies
-        system_dependencies = _find_system_dependencies(
-            self.catkin_packages, self.options.rosdistro,
-            self._ros_package_path, os.path.join(self.partdir, 'rosdep'),
-            self.PLUGIN_STAGE_SOURCES)
+        os.makedirs(self._ros_source_path, exist_ok=True)
+        # Fetch the source for any dependencies that have it available
+        wstool = _Wstool(self._ros_source_path, ubuntu_repo, ros_tools_path)
+        rosinstall_generator = _RosinstallGenerator(
+            self.options.rosdistro, ubuntu_repo, ros_tools_path)
+        unpulled_dependencies = _pull_ros_dependency_sources(
+            rosinstall_generator, wstool, ros_dependencies,
+            self._ros_source_path)
 
-        # Pull down and install any system dependencies that were discovered
+        logger.info('Determining system dependencies for ROS sources...')
+        source_system_dependencies = rosdep.get_dependencies(
+            self._ros_source_path, from_paths=True)
+
+        # Any non-source dependencies must be system dependencies, so let's
+        # try to resolve those into actual Ubuntu packages.
+        rospack = _Rospack(self._ros_source_path, ubuntu_repo, ros_tools_path)
+        logger.info('Attempting to resolve the non-source dependencies as '
+                    'system dependencies...')
+        system_dependencies = _resolve_system_dependencies(
+            rosdep, rospack, self.catkin_packages,
+            unpulled_dependencies.union(source_system_dependencies))
+
+        # Pull down and unpack any system dependencies that were discovered
+        # as if they were stage-packages.
         if system_dependencies:
-            ubuntudir = os.path.join(self.partdir, 'ubuntu')
-            os.makedirs(ubuntudir, exist_ok=True)
+            logger.info('Fetching system dependencies: {}'.format(
+                ', '.join(system_dependencies)))
+            try:
+                ubuntu_repo.get(system_dependencies)
+            except PackageNotFoundError as e:
+                raise RuntimeError(
+                    'Failed to fetch system dependencies: {}'.format(
+                        e.message()))
 
-            logger.info('Preparing to fetch package dependencies...')
-            ubuntu = repo.Ubuntu(ubuntudir, sources=self.PLUGIN_STAGE_SOURCES)
-
-            logger.info('Fetching package dependencies...')
-            ubuntu.get(system_dependencies)
-
-            logger.info('Installing package dependencies...')
-            ubuntu.unpack(self.installdir)
+            logger.info('Unpacking system dependencies...')
+            ubuntu_repo.unpack(self.installdir)
 
     @property
     def gcc_version(self):
@@ -216,8 +239,11 @@ class CatkinPlugin(snapcraft.BasePlugin):
 
         super().build()
 
-        #logger.info('Preparing to build Catkin packages...')
-        #self._prepare_build()
+        logger.info('Preparing to build Catkin packages...')
+        self._prepare_build()
+
+        logger.info('Building dependencies...')
+        self._build_ros_source()
 
         logger.info('Building Catkin packages...')
         self._build_catkin_packages()
@@ -243,7 +269,8 @@ class CatkinPlugin(snapcraft.BasePlugin):
             return '"' + ';'.join(paths) + '"'
 
         # Looking for any path-like string
-        common.replace_in_file(self.rosdir, re.compile(r'.*Config.cmake$'),
+        common.replace_in_file(self.installdir,
+                               re.compile(r'.*[Cc]onfig.cmake$'),
                                re.compile(r'"(.*?/.*?)"'),
                                rewrite_paths)
 
@@ -269,18 +296,37 @@ class CatkinPlugin(snapcraft.BasePlugin):
                                   'etc/catkin/profile.d/10.ros.sh')
         if os.path.isfile(ros10_file):
             with open(ros10_file, 'r+') as f:
-                pattern = re.compile(r'/usr/bin/python')
+                pattern = re.compile(re.escape(self.installdir) + '/usr/bin/python')
                 replaced = pattern.sub(r'python', f.read())
                 f.seek(0)
                 f.truncate()
                 f.write(replaced)
+
+    def _build_ros_source(self):
+        if not os.path.exists(self._ros_source_path):
+            return
+
+        command = [os.path.join(self._ros_source_path, 'catkin', 'bin',
+                                'catkin_make_isolated')]
+
+        # Install the packages
+        command.append('--install')
+
+        # Specify the install location so it'll be placed into the .snap
+        command.extend(['--install-space', self.rosdir])
+
+        self._add_catkin_cmake_args(command)
+
+        self._run_in_bash(command, cwd=os.path.join(self._ros_source_path,
+                                                    '..'))
 
     def _build_catkin_packages(self):
         # Nothing to do if no packages were specified
         if not self.catkin_packages:
             return
 
-        catkincmd = ['catkin_make_isolated']
+        catkincmd = [os.path.join(self._ros_source_path, 'catkin', 'bin',
+                                  'catkin_make_isolated')]
 
         # Install the package
         catkincmd.append('--install')
@@ -301,11 +347,21 @@ class CatkinPlugin(snapcraft.BasePlugin):
         # the ROS distro.
         catkincmd.extend(['--install-space', self.rosdir])
 
+        self._add_catkin_cmake_args(catkincmd)
+
+        # This command must run in bash due to a bug in Catkin that causes it
+        # to explode if there are spaces in the cmake args (which there are).
+        # This has been fixed in Catkin Tools... perhaps we should be using
+        # that instead.
+        self._run_in_bash(catkincmd)
+
+    def _add_catkin_cmake_args(self, command):
         # All the arguments that follow are meant for CMake
-        catkincmd.append('--cmake-args')
+        command.append('--cmake-args')
 
         # Make sure we're using the compilers included in this .snap
-        catkincmd.extend([
+        command.extend([
+            '-DCMAKE_BUILD_TYPE=Release',
             '-DCMAKE_C_FLAGS="$CFLAGS"',
             '-DCMAKE_CXX_FLAGS="$CPPFLAGS -I{} -I{}"'.format(
                 os.path.join(self.installdir, 'usr', 'include', 'c++',
@@ -319,13 +375,6 @@ class CatkinPlugin(snapcraft.BasePlugin):
             '-DCMAKE_CXX_COMPILER={}'.format(
                 os.path.join(self.installdir, 'usr', 'bin', 'g++'))
         ])
-
-        # This command must run in bash due to a bug in Catkin that causes it
-        # to explode if there are spaces in the cmake args (which there are).
-        # This has been fixed in Catkin Tools... perhaps we should be using
-        # that instead.
-        self._run_in_bash(catkincmd)
-
 
 def _find_extra_dependencies(rosdep, catkin_packages):
     dependencies = set()
@@ -341,62 +390,176 @@ def _find_extra_dependencies(rosdep, catkin_packages):
     return dependencies
 
 
-def _find_system_dependencies(catkin_packages, ros_distro, ros_package_path,
-                              rosdep_path, ubuntu_sources):
-    """Find system dependencies for a given set of Catkin packages."""
+def _pull_ros_dependency_sources(rosinstall_generator, wstool, dependencies,
+                                 ros_workspace):
+    # Initialize workspace (essentially creates an empty rosinstall file).
+    wstool.initialize()
 
-    rosdep = _Rosdep(ros_distro, ros_package_path, rosdep_path, ubuntu_sources)
-    rosdep.setup()
+    unpulled_dependencies = set()
+    for dependency in dependencies:
+        try:
+            rosinstall_file = os.path.join(ros_workspace,
+                                           '{}.install'.format(dependency))
+
+            logger.info('Generating rosinstall file for "{}"...'.format(
+                dependency))
+
+            # Generate the rosinstall file for this dependency and all of its
+            # dependencies.
+            rosinstall_generator.generate(dependency, rosinstall_file)
+
+            # Include the contents of this rosinstall file in our workspace
+            # (this doesn't pull code, yet).
+            wstool.merge(rosinstall_file)
+
+        except PackageNotReleased:
+            # This dependency's source wasn't available-- perhaps it's a system
+            # dependency?
+            unpulled_dependencies.add(dependency)
+
+    logger.info('Fetching source for dependencies...')
+    # Finally, pull down all the dependencies.
+    wstool.update()
+
+    return unpulled_dependencies
+
+def _resolve_system_dependencies(rosdep, rospack, catkin_packages,
+                                 dependencies):
+    """Resolve a set of ROS dependencies into system dependencies (if
+    possible)."""
 
     system_dependencies = {}
+    for dependency in dependencies:
+        if dependency in catkin_packages or rospack.find(dependency):
+            continue
 
-    logger.info('Determining system dependencies for Catkin packages...')
-    for package in catkin_packages:
-        # Query rosdep for the list of dependencies for this package
-        dependencies = rosdep.get_dependencies(package)
-
-        for dependency in dependencies:
-            # No need to resolve this dependency if we know it's local, or if
-            # we've already resolved it into a system dependency
-            if (dependency in catkin_packages or
-                    dependency in system_dependencies):
-                continue
-
-            # In this situation, the package depends on something that we
-            # weren't instructed to build. It's probably a system dependency,
-            # but the developer could have also forgotten to tell us to build
-            # it.
+        # In this situation, the package depends on something that we
+        # weren't instructed to build. It's probably a system dependency,
+        # but the developer could have also forgotten to tell us to build
+        # it.
+        try:
             system_dependency = rosdep.resolve_dependency(dependency)
+        except SystemDependencyNotFound:
+            raise RuntimeError(
+                'Package "{}" isn\'t a valid system dependency. '
+                'Did you forget to add it to catkin-packages? If '
+                'not, add the Ubuntu package containing it to '
+                'stage-packages until you can get it into the '
+                'rosdep database.'.format(dependency))
 
-            if not system_dependency:
-                raise RuntimeError(
-                    'Package "{}" isn\'t a valid system dependency. '
-                    'Did you forget to add it to catkin-packages? If '
-                    'not, add the Ubuntu package containing it to '
-                    'stage-packages until you can get it into the '
-                    'rosdep database.'.format(dependency))
-
+        # It's possible for rosdep to return nothing, which isn't an error--
+        # it means that there's no package to install.
+        if system_dependency:
             system_dependencies[dependency] = system_dependency
 
-            # TODO: Not sure why this isn't pulled in by roscpp. Can it
-            # be compiled by clang, etc.? If so, perhaps this should be
-            # left up to the developer.
+            # TODO: Not sure why this isn't pulled in by roscpp. Can it be
+            # compiled by clang, etc.? If so, perhaps this should be left up to
+            # the developer.
             if dependency == 'roscpp':
                 system_dependencies['g++'] = 'g++'
 
-    # Finally, return a list of all system dependencies
-    return list(system_dependencies.values())
+    # Finally, return a flat list of all system dependencies
+    return set([item for sublist in system_dependencies.values()
+                for item in sublist])
+
+#def _find_system_dependencies(catkin_packages, ros_distro, ros_package_path,
+#                              rosdep_path, ubuntu_sources):
+#    """Find system dependencies for a given set of Catkin packages."""
+
+#    rosdep = _Rosdep(ros_distro, ros_package_path, rosdep_path, ubuntu_sources)
+#    rosdep.setup()
+
+#    system_dependencies = {}
+
+#    logger.info('Determining system dependencies for Catkin packages...')
+#    for package in catkin_packages:
+#        # Query rosdep for the list of dependencies for this package
+#        dependencies = rosdep.get_dependencies(package)
+
+#        for dependency in dependencies:
+#            # No need to resolve this dependency if we know it's local, or if
+#            # we've already resolved it into a system dependency
+#            if (dependency in catkin_packages or
+#                    dependency in system_dependencies):
+#                continue
+
+#            # In this situation, the package depends on something that we
+#            # weren't instructed to build. It's probably a system dependency,
+#            # but the developer could have also forgotten to tell us to build
+#            # it.
+#            system_dependency = rosdep.resolve_dependency(dependency)
+
+#            if not system_dependency:
+#                raise RuntimeError(
+#                    'Package "{}" isn\'t a valid system dependency. '
+#                    'Did you forget to add it to catkin-packages? If '
+#                    'not, add the Ubuntu package containing it to '
+#                    'stage-packages until you can get it into the '
+#                    'rosdep database.'.format(dependency))
+
+#            system_dependencies[dependency] = system_dependency
+
+#            # TODO: Not sure why this isn't pulled in by roscpp. Can it
+#            # be compiled by clang, etc.? If so, perhaps this should be
+#            # left up to the developer.
+#            if dependency == 'roscpp':
+#                system_dependencies['g++'] = 'g++'
+
+#    # Finally, return a list of all system dependencies
+#    return list(system_dependencies.values())
 
 
-class _Rosdep:
-    def __init__(self, ros_distro, ros_package_path, rosdep_path):
+class _DependencyTool:
+    def __init__(self, ubuntu_repo, tools_path):
+        self.tools_path = tools_path
+        self.tools_install_path = os.path.join(tools_path, 'install')
+        self.tools_data_path = os.path.join(tools_path, 'data')
+
+        # Make sure we have a directory to unpack into
+        os.makedirs(self.tools_install_path, exist_ok=True)
+
+        tools = self.ubuntu_packages()
+        if tools:
+            logger.info('Fetching dependency tool(s): {}'.format(
+                ' '.join(tools)))
+            ubuntu_repo.get(tools)
+
+            logger.info('Unpacking dependency tool(s): {}'.format(
+                ' '.join(tools)))
+            ubuntu_repo.unpack(self.tools_install_path)
+
+    def ubuntu_packages(self):
+        return []
+
+    def run(self, command, env=None):
+        if not env:
+            env = os.environ.copy()
+
+        env['PATH'] = os.path.join(self.tools_install_path, 'usr', 'bin')
+        env['PYTHONPATH'] = os.path.join(self.tools_install_path, 'usr', 'lib',
+                                         'python2.7', 'dist-packages')
+
+        return subprocess.check_output(
+            command, env=env, stderr=subprocess.STDOUT).decode('utf8').strip()
+
+
+class SystemDependencyNotFound(Exception):
+    pass
+
+
+class _Rosdep(_DependencyTool):
+    def __init__(self, ros_distro, ros_package_path, ubuntu_repo, tools_path):
+        super().__init__(ubuntu_repo, tools_path)
+
         self._ros_distro = ros_distro
         self._ros_package_path = ros_package_path
-        self._rosdep_path = rosdep_path
-        self._rosdep_install_path = os.path.join(self._rosdep_path, 'install')
-        self._rosdep_sources_path = os.path.join(self._rosdep_path,
+        self._rosdep_sources_path = os.path.join(self.tools_data_path,
                                                  'sources.list.d')
-        self._rosdep_cache_path = os.path.join(self._rosdep_path, 'cache')
+        self._rosdep_cache_path = os.path.join(self.tools_data_path,
+                                               'cache')
+
+    def ubuntu_packages(self):
+        return super().ubuntu_packages() + ['python-rosdep']
 
     def setup(self):
         # Make sure we can run multiple times without error, while leaving the
@@ -405,28 +568,11 @@ class _Rosdep:
             shutil.rmtree(self._rosdep_sources_path)
 
         os.makedirs(self._rosdep_sources_path)
-        os.makedirs(self._rosdep_install_path, exist_ok=True)
         os.makedirs(self._rosdep_cache_path, exist_ok=True)
-
-        # rosdep isn't necessarily a dependency of the project, and we don't
-        # want to bloat the .snap more than necessary. So we'll unpack it
-        # somewhere else, and use it from there.
-        logger.info('Preparing to fetch rosdep...')
-        ubuntu = repo.Ubuntu(self._rosdep_path)
-
-        # rosdep in xenial requires python-rospkg, python-catkin-pkg, and
-        # python-rosdistro, but the .deb doesn't depend upon them, so we need
-        # to pull them all down here.
-        logger.info('Fetching rosdep...')
-        ubuntu.get(['python-rosdep', 'python-rospkg', 'python-catkin-pkg',
-                    'python-rosdistro'])
-
-        logger.info('Installing rosdep...')
-        ubuntu.unpack(self._rosdep_install_path)
 
         logger.info('Initializing rosdep database...')
         try:
-            self._run(['init'])
+            self.run(['init'])
         except subprocess.CalledProcessError as e:
             output = e.output.decode('utf8').strip()
             raise RuntimeError(
@@ -434,15 +580,19 @@ class _Rosdep:
 
         logger.info('Updating rosdep database...')
         try:
-            self._run(['update'])
+            self.run(['update'])
         except subprocess.CalledProcessError as e:
             output = e.output.decode('utf8').strip()
             raise RuntimeError(
                 'Error updating rosdep database:\n{}'.format(output))
 
-    def get_dependencies(self, package_name):
+    def get_dependencies(self, package_name, from_paths=False):
+        command = ['keys', package_name]
+        if from_paths:
+            command.append('--from-paths')
+
         try:
-            output = self._run(['keys', package_name]).strip()
+            output = self.run(command)
             if output:
                 return output.split('\n')
             else:
@@ -461,31 +611,33 @@ class _Rosdep:
             #    the Trusty ROS sources, so we're telling rosdep to resolve
             #    dependencies using Trusty (even if we're running on something
             #    else).
-            output = self._run(['resolve', dependency_name, '--rosdistro',
+            output = self.run(['resolve', dependency_name, '--rosdistro',
                                 self._ros_distro, '--os', 'ubuntu:trusty'])
         except subprocess.CalledProcessError:
-            return None
+            raise SystemDependencyNotFound(
+                '"{}" does not resolve to a system dependency'.format(
+                    dependency_name))
 
         # `rosdep resolve` returns output like:
         # #apt
         # ros-indigo-package
         #
-        # We're obviously only interested in the second line.
-        resolved = output.split('\n')
+        # Everything that isn't a package name is prepended with the pound
+        # sign, so we'll ignore everything with that.
+        delimiters = re.compile(r'\n|\s')
+        lines = delimiters.split(output)
+        return [line for line in lines if not line.startswith('#')]
 
-        if len(resolved) < 2:
-            raise RuntimeError(
-                'Unexpected rosdep resolve output:\n{}'.format(output))
+#    def install(self, items, from_paths=False):
+#        command = ['install'] + items
 
-        return resolved[1]
+#        if from_paths:
+#            command.append('--from-paths')
 
-    def _run(self, arguments):
+#        self.run(command + ['--ignore-src', '--rosdistro', self._ros_distro])
+
+    def run(self, arguments):
         env = os.environ.copy()
-
-        # We want to make sure we use our own rosdep (which is python)
-        env['PATH'] = os.path.join(self._rosdep_install_path, 'usr', 'bin')
-        env['PYTHONPATH'] = os.path.join(self._rosdep_install_path, 'usr',
-                                         'lib', 'python2.7', 'dist-packages')
 
         # By default, rosdep uses /etc/ros/rosdep to hold its sources list. We
         # don't want that here since we don't want to touch the host machine
@@ -501,5 +653,95 @@ class _Rosdep:
         # search for packages.
         env['ROS_PACKAGE_PATH'] = self._ros_package_path
 
-        return subprocess.check_output(['rosdep'] + arguments,
-                                       env=env).decode('utf8').strip()
+        return super().run(['rosdep'] + arguments, env=env)
+
+
+class _Wstool(_DependencyTool):
+
+    def __init__(self, source_path, ubuntu_repo, tools_path):
+        super().__init__(ubuntu_repo, tools_path)
+
+        self._source_path = source_path
+
+    def ubuntu_packages(self):
+        return super().ubuntu_packages() + ['python-wstool']
+
+    def initialize(self):
+        try:
+            self.run(['wstool', 'init', self._source_path])
+        except subprocess.CalledProcessError as e:
+            output = e.output.decode('utf8').strip()
+            raise RuntimeError(
+                'Error initializing workspace:\n{}'.format(output))
+
+    def merge(self, rosinstall_file):
+        try:
+            self.run(['wstool', 'merge', '-k', '-t', self._source_path,
+                      rosinstall_file])
+        except subprocess.CalledProcessError as e:
+            output = e.output.decode('utf8').strip()
+            raise RuntimeError(
+                'Error merging rosinstall file:\n{}'.format(output))
+
+    def update(self):
+        try:
+            self.run(['wstool', 'update', '-t', self._source_path])
+        except subprocess.CalledProcessError as e:
+            output = e.output.decode('utf8').strip()
+            raise RuntimeError(
+                'Error updating workspace:\n{}'.format(output))
+
+class PackageNotReleased(Exception):
+    pass
+
+class _RosinstallGenerator(_DependencyTool):
+
+    def __init__(self, ros_distro, ubuntu_repo, tools_path):
+        super().__init__(ubuntu_repo, tools_path)
+
+        self._ros_distro = ros_distro
+
+    def ubuntu_packages(self):
+        return super().ubuntu_packages() + ['python-rosinstall-generator']
+
+    def generate(self, ros_package, output_rosinstall_file):
+        try:
+            output = self.run(['rosinstall_generator', ros_package,
+                               '--rosdistro', self._ros_distro, '--deps',
+                               '--wet-only', '--tar'])
+        except subprocess.CalledProcessError as e:
+            output = e.output.decode('utf8').strip()
+            raise PackageNotReleased(
+                'Unable to generate rosinstall file:\n{}'.format(output))
+
+        with open(output_rosinstall_file, 'w') as output_file:
+            output_file.write(output)
+
+
+class _Rospack(_DependencyTool):
+
+    def __init__(self, ros_package_path, ubuntu_repo, tools_path):
+        super().__init__(ubuntu_repo, tools_path)
+
+        self._ros_package_path = ros_package_path
+
+    def ubuntu_packages(self):
+        return (super().ubuntu_packages() + ['rospack-tools'])
+
+    def find(self, ros_package):
+        try:
+            return self.run(['find', ros_package])
+        except subprocess.CalledProcessError as e:
+            return None
+
+    def run(self, arguments):
+        env = os.environ.copy()
+
+        # This environment variable tells rospack the directory in which to
+        # recursively search for packages.
+        env['ROS_PACKAGE_PATH'] = self._ros_package_path
+
+        env['LD_LIBRARY_PATH'] = os.path.join(
+            self.tools_install_path, 'usr', 'lib', common.get_arch_triplet())
+
+        return super().run(['rospack'] + arguments, env=env)

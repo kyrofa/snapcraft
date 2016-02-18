@@ -5,8 +5,8 @@ icon: icon.svg
 description: A really small ROS example
 
 apps:
-  rosmaster:
-    command: bin/roscore-rosmaster-service
+  roscore:
+    command: roscore
     daemon: simple
     uses: [listener]
   listener:
