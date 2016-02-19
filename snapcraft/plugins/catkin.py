@@ -206,7 +206,7 @@ class CatkinPlugin(snapcraft.BasePlugin):
             except repo.PackageNotFoundError as e:
                 raise RuntimeError(
                     'Failed to fetch system dependencies: {}'.format(
-                        e.message()))
+                        e.message))
 
             logger.info('Unpacking system dependencies...')
             ubuntu_repo.unpack(self.installdir)
