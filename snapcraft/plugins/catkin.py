@@ -203,7 +203,7 @@ class CatkinPlugin(snapcraft.BasePlugin):
                 ', '.join(system_dependencies)))
             try:
                 ubuntu_repo.get(system_dependencies)
-            except PackageNotFoundError as e:
+            except repo.PackageNotFoundError as e:
                 raise RuntimeError(
                     'Failed to fetch system dependencies: {}'.format(
                         e.message()))
