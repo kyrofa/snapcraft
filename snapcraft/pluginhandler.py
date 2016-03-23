@@ -232,8 +232,8 @@ class PluginHandler:
         self.ubuntu.unpack(self.installdir)
 
         snap_files, snap_dirs = self.migratable_fileset_for('stage')
-        _migrate_files(snap_files, snap_dirs, self.code.installdir,
-                       self.stagedir, missing_ok=True)
+        common.migrate_resources(snap_files, snap_dirs, self.code.installdir,
+                                 self.stagedir, missing_ok=True)
 
     def pull(self, force=False):
         if not self.should_step_run('pull', force):
@@ -310,8 +310,8 @@ class PluginHandler:
         self.notify_stage('Staging')
         self._organize()
         snap_files, snap_dirs = self.migratable_fileset_for('stage')
-        _migrate_files(snap_files, snap_dirs, self.code.installdir,
-                       self.stagedir)
+        common.migrate_resources(snap_files, snap_dirs, self.code.installdir,
+                                 self.stagedir)
 
         self.mark_done('stage', StageState(snap_files, snap_dirs))
 
@@ -345,7 +345,8 @@ class PluginHandler:
 
         self.notify_stage('Stripping')
         snap_files, snap_dirs = self.migratable_fileset_for('snap')
-        _migrate_files(snap_files, snap_dirs, self.stagedir, self.snapdir)
+        common.migrate_resources(snap_files, snap_dirs, self.stagedir,
+                                 self.snapdir)
 
         self.mark_done('strip', StripState(snap_files, snap_dirs))
 
@@ -386,8 +387,8 @@ class PluginHandler:
 
         # Finally, clean the files and directories that are specific to this
         # part.
-        _clean_migrated_files(stripped_files, stripped_directories,
-                              shared_directory)
+        common.clean_migrated_resources(stripped_files, stripped_directories,
+                                        shared_directory)
 
     def env(self, root):
         return self.code.env(root)
@@ -557,42 +558,6 @@ def _migratable_filesets(fileset, srcdir):
     snap_files = snap_files - snap_dirs
 
     return snap_files, snap_dirs
-
-
-def _migrate_files(snap_files, snap_dirs, srcdir, dstdir, missing_ok=False):
-    for directory in snap_dirs:
-        os.makedirs(os.path.join(dstdir, directory), exist_ok=True)
-
-    for snap_file in snap_files:
-        src = os.path.join(srcdir, snap_file)
-        dst = os.path.join(dstdir, snap_file)
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        if missing_ok and not os.path.exists(src):
-            continue
-
-        # If the file is already here and it's a symlink, leave it alone.
-        if os.path.islink(dst):
-            continue
-
-        # Otherwise, remove and re-link it.
-        if os.path.exists(dst):
-            os.remove(dst)
-
-        os.link(src, dst, follow_symlinks=False)
-
-
-def _clean_migrated_files(snap_files, snap_dirs, directory):
-    for snap_file in snap_files:
-        os.remove(os.path.join(directory, snap_file))
-
-    # snap_dirs may not be ordered so that subdirectories come before
-    # parents, and we want to be able to remove directories if possible, so
-    # we'll sort them in reverse here to get subdirectories before parents.
-    snap_dirs = sorted(snap_dirs, reverse=True)
-
-    for snap_dir in snap_dirs:
-        if not os.listdir(os.path.join(directory, snap_dir)):
-            os.rmdir(os.path.join(directory, snap_dir))
 
 
 def _get_file_list(stage_set):

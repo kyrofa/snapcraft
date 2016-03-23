@@ -357,7 +357,6 @@ class TestUri(tests.TestCase):
                 options = tests.MockOptions(source=source)
                 snapcraft.sources.get(
                     sourcedir='dummy',
-                    builddir='dummy',
                     options=options)
 
                 mock_pull.assert_called_once_with()
@@ -375,7 +374,6 @@ class TestUri(tests.TestCase):
                 options = tests.MockOptions(source=source)
                 snapcraft.sources.get(
                     sourcedir='dummy',
-                    builddir='dummy',
                     options=options)
 
                 mock_pull.assert_called_once_with()

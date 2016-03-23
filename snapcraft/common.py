@@ -21,6 +21,7 @@ import logging
 import multiprocessing
 import os
 import platform
+import shutil
 import subprocess
 import tempfile
 import urllib
@@ -253,3 +254,47 @@ def _search_and_replace_contents(file_path, search_pattern, replacement):
             f.seek(0)
             f.truncate()
             f.write(replaced)
+
+
+def migrate_resources(files, directories, source_directory,
+                      destination_directory, missing_ok=False):
+    for directory in directories:
+        source_path = os.path.join(source_directory, directory)
+        destination_path = os.path.join(destination_directory, directory)
+        if os.path.islink(source_path):
+            os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+            shutil.copy2(source_path, destination_path, follow_symlinks=False)
+        else:
+            os.makedirs(destination_path, exist_ok=True)
+
+    for snap_file in files:
+        src = os.path.join(source_directory, snap_file)
+        dst = os.path.join(destination_directory, snap_file)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if missing_ok and not os.path.exists(src):
+            continue
+
+        # If the file is already here and it's a symlink, leave it alone.
+        if os.path.islink(dst):
+            continue
+
+        # Otherwise, remove and re-link it.
+        if os.path.exists(dst):
+            os.remove(dst)
+
+        os.link(src, dst, follow_symlinks=False)
+
+
+def clean_migrated_resources(files, directories, directory_to_clean):
+    for file_path in files:
+        os.remove(os.path.join(directory_to_clean, file_path))
+
+    # snap_dirs may not be ordered so that subdirectories come before
+    # parents, and we want to be able to remove directories if possible, so
+    # we'll sort them in reverse here to get subdirectories before parents.
+    directories = sorted(directories, reverse=True)
+
+    for directory in directories:
+        directory_path = os.path.join(directory_to_clean, directory)
+        if not os.listdir(directory_path):
+            os.rmdir(directory_path)

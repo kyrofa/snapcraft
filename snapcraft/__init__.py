@@ -114,9 +114,28 @@ be used in any part irrespective of the plugin, these are
 import contextlib
 import os
 import shutil
+import yaml
 
 from snapcraft import common
 from snapcraft import sources
+
+
+class BuildResources(yaml.YAMLObject):
+    yaml_tag = u'!BuildFiles'
+
+    def __init__(self, files, directories):
+        self.files = files
+        self.directories = directories
+
+    def __repr__(self):
+        return '{}(files: {}, directories: {})'.format(
+            self.__class__, self.files, self.directories)
+
+    def __eq__(self, other):
+        if type(other) is type(self):
+            return self.__dict__ == other.__dict__
+
+        return False
 
 
 class BasePlugin:
@@ -180,6 +199,9 @@ class BasePlugin:
         self.sourcedir = os.path.join(self.partdir, 'src')
         self.installdir = os.path.join(self.partdir, 'install')
 
+        self.build_files = set()
+        self.build_directories = set()
+
         self.build_basedir = os.path.join(self.partdir, 'build')
         source_subdir = getattr(self.options, 'source_subdir', None)
         if source_subdir:
@@ -205,7 +227,7 @@ class BasePlugin:
         enhance with custom pull logic.
         """
         if getattr(self.options, 'source', None):
-            sources.get(self.sourcedir, self.build_basedir, self.options)
+            sources.get(self.sourcedir, self.options)
 
     def build(self):
         """Build the source code retrieved from the pull phase.
@@ -214,11 +236,31 @@ class BasePlugin:
         Override this method if you need to process the source code to make it
         runnable.
         """
-        if not os.path.exists(self.build_basedir):
-            shutil.copytree(
-                self.sourcedir, self.build_basedir, symlinks=True,
-                ignore=lambda d, s: common.SNAPCRAFT_FILES
-                if d is self.sourcedir else [])
+
+        if self.build_files or self.build_directories:
+            common.clean_migrated_resources(self.build_files,
+                                            self.build_directories,
+                                            self.build_basedir)
+
+        self.build_files = set()
+        self.build_directories = set()
+
+        for root, directories, files in os.walk(self.sourcedir):
+            for directory in directories:
+                self.build_directories.add(
+                    os.path.relpath(
+                        os.path.join(root, directory), self.sourcedir))
+
+            for file_name in files:
+                self.build_files.add(
+                    os.path.relpath(
+                        os.path.join(root, file_name), self.sourcedir))
+
+        self.build_directories -= set(common.SNAPCRAFT_FILES)
+        self.build_files -= set(common.SNAPCRAFT_FILES)
+
+        common.migrate_resources(self.build_files, self.build_directories,
+                                 self.sourcedir, self.build_basedir)
 
     def clean_build(self):
         """Clean the artifacts that resulted from building this part.

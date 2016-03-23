@@ -264,11 +264,10 @@ class Local(Base):
         os.symlink(source_abspath, self.source_dir)
 
 
-def get(sourcedir, builddir, options):
-    """Populate sourcedir and builddir from parameters defined in options.
+def get(sourcedir, options):
+    """Populate sourcedir from parameters defined in options.
 
     :param str sourcedir: The source directory to use.
-    :param str builddir: The build directory to use.
     :param options: source options.
     """
     source_type = getattr(options, 'source_type', None)

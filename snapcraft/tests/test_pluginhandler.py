@@ -169,7 +169,7 @@ class PluginTestCase(tests.TestCase):
 
                 files, dirs = pluginhandler._migratable_filesets(
                     filesets[key]['fileset'], srcdir)
-                pluginhandler._migrate_files(files, dirs, srcdir, dstdir)
+                common.migrate_resources(files, dirs, srcdir, dstdir)
 
                 expected = []
                 for item in filesets[key]['result']:
@@ -199,7 +199,7 @@ class PluginTestCase(tests.TestCase):
             f.write('installed')
 
         files, dirs = pluginhandler._migratable_filesets('*', 'install')
-        pluginhandler._migrate_files(files, dirs, 'install', 'stage')
+        common.migrate_resources(files, dirs, 'install', 'stage')
 
         # Verify that the staged file is the one that was staged last
         with open('stage/foo', 'r') as f:

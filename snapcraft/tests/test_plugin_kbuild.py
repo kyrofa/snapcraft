@@ -17,6 +17,7 @@
 import logging
 import os
 from unittest import mock
+import time
 
 import fixtures
 
@@ -155,6 +156,10 @@ class KBuildPluginTestCase(tests.TestCase):
         plugin = kbuild.KBuildPlugin('test-part', self.options)
 
         os.makedirs(plugin.sourcedir)
+
+        print(plugin.sourcedir)
+
+        time.sleep(60)
 
         plugin.build()
 
