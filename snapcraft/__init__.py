@@ -237,6 +237,8 @@ class BasePlugin:
         runnable.
         """
 
+        os.makedirs(self.build_basedir, exist_ok=True)
+
         if self.build_files or self.build_directories:
             common.clean_migrated_resources(self.build_files,
                                             self.build_directories,
