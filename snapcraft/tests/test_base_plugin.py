@@ -204,37 +204,31 @@ class BuildTestCase(tests.TestCase):
 
 class CleanBuildTestCase(tests.TestCase):
 
-    def test_do_not_follow_links(self):
-        options = tests.MockOptions(source='.')
+    def test_build_clean(self):
+        options = tests.MockOptions(source='src')
         plugin = snapcraft.BasePlugin('test_plugin', options)
 
-        os.makedirs(plugin.partdir)
-        os.symlink(os.path.abspath('.'), plugin.sourcedir)
+        os.makedirs(plugin.sourcedir)
+        source_file = os.path.join(plugin.sourcedir, 'source')
+        open(source_file, 'w').close()
+
+        os.makedirs(plugin.build_basedir)
+        open(os.path.join(plugin.build_basedir, 'built'), 'w').close()
+
+        os.makedirs(plugin.installdir)
+        open(os.path.join(plugin.installdir, 'installed'), 'w').close()
 
         # Create a file and a symlink to it
         open('file', mode='w').close()
         os.symlink('file', 'symlinkfile')
 
-        # Create a directory and a symlink to it
-        os.mkdir('dir')
-        os.symlink('dir', 'symlinkdir')
-        plugin.build()
+        plugin.clean_build()
 
-        # Make sure this is still a link
-        self.assertTrue(os.path.islink(plugin.sourcedir))
+        # Make sure the source file hasn't been touched
+        self.assertTrue(os.path.isfile(source_file))
 
-        build_file_path = os.path.join(
-            plugin.builddir, 'file')
-        build_symlinkfile_path = os.path.join(
-            plugin.builddir, 'symlinkfile')
+        # Make sure the build directory is gone
+        self.assertFalse(os.path.exists(plugin.build_basedir))
 
-        self.assertTrue(os.path.isfile(build_file_path))
-        self.assertTrue(os.path.islink(build_symlinkfile_path))
-
-        build_dir_path = os.path.join(
-            plugin.builddir, 'dir')
-        build_symlinkdir_path = os.path.join(
-            plugin.builddir, 'symlinkdir')
-
-        self.assertTrue(os.path.isdir(build_dir_path))
-        self.assertTrue(os.path.islink(build_symlinkdir_path))
+        # Make sure the install directory is gone
+        self.assertFalse(os.path.exists(plugin.installdir))

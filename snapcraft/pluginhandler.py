@@ -223,11 +223,13 @@ class PluginHandler:
     def _step_state_file(self, step):
         return os.path.join(self.statedir, step)
 
-    def _setup_stage_packages(self):
-        ubuntu = repo.Ubuntu(
+    def _fetch_stage_packages(self):
+        self.ubuntu = repo.Ubuntu(
             self.ubuntudir, sources=self.code.PLUGIN_STAGE_SOURCES)
-        ubuntu.get(self.code.stage_packages)
-        ubuntu.unpack(self.installdir)
+        self.ubuntu.get(self.code.stage_packages)
+
+    def _unpack_stage_packages(self):
+        self.ubuntu.unpack(self.installdir)
 
         snap_files, snap_dirs = self.migratable_fileset_for('stage')
         _migrate_files(snap_files, snap_dirs, self.code.installdir,
@@ -240,7 +242,8 @@ class PluginHandler:
         self.makedirs()
         self.notify_stage('Pulling')
         if self.code.stage_packages:
-            self._setup_stage_packages()
+            self._fetch_stage_packages()
+            self._unpack_stage_packages()
         self.code.pull()
         self.mark_done('pull')
 
@@ -255,6 +258,10 @@ class PluginHandler:
             return
         self.makedirs()
         self.notify_stage('Building')
+        if self.code.stage_packages:
+            # These were already fetched and unpacked in pull(), but unpack
+            # again here in case the build was cleaned.
+            self._unpack_stage_packages()
         self.code.build()
         self.mark_done('build')
 
