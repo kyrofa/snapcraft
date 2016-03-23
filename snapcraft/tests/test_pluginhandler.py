@@ -541,6 +541,37 @@ class StateTestCase(tests.TestCase):
             "run strip again.")
 
 
+class BuildTestCase(tests.TestCase):
+
+    def setUp(self):
+        super().setUp()
+
+        self.handler = pluginhandler.load_plugin('part_name', 'nil')
+        self.handler.makedirs()
+
+    def test_build_drops_old_sources(self):
+        sourcedir = self.handler.code.sourcedir
+        builddir = self.handler.code.builddir
+
+        file1 = os.path.join(sourcedir, '1')
+        file2 = os.path.join(sourcedir, '2')
+        open(file1, 'w').close()
+        open(file2, 'w').close()
+
+        self.handler.build()
+
+        self.assertTrue(os.path.isfile(os.path.join(builddir, '1')))
+        self.assertTrue(os.path.isfile(os.path.join(builddir, '2')))
+
+        # Now remove one of the source files and build again. We expect file
+        # to also be removed from the build directory.
+        os.remove(file2)
+        self.handler.build()
+
+        self.assertTrue(os.path.isfile(os.path.join(builddir, '1')))
+        self.assertFalse(os.path.exists(os.path.join(builddir, '2')))
+
+
 class CleanTestCase(tests.TestCase):
 
     @patch('shutil.rmtree')

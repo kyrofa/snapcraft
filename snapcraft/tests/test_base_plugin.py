@@ -201,6 +201,100 @@ class BuildTestCase(tests.TestCase):
             self.assertFalse(
                 os.path.exists(os.path.join(plugin.builddir, file_)))
 
+    def test_build_gets_new_sources(self):
+        plugin = snapcraft.BasePlugin('test-part', options=None)
+
+        os.makedirs(os.path.join(plugin.sourcedir, 'foo'))
+
+        file1 = os.path.join(plugin.sourcedir, 'foo', '1')
+        built_file1 = os.path.join(plugin.builddir, 'foo', '1')
+        open(file1, 'w').close()
+
+        self.assertFalse(plugin.build_files)
+        self.assertFalse(plugin.build_directories)
+
+        plugin.build()
+
+        self.assertEqual(plugin.build_files, {'foo/1'})
+        self.assertEqual(plugin.build_directories, {'foo'})
+
+        self.assertTrue(os.path.isfile(built_file1))
+
+        file2 = os.path.join(plugin.sourcedir, 'foo', '2')
+        built_file2 = os.path.join(plugin.builddir, 'foo', '2')
+        open(file2, 'w').close()
+
+        plugin.build()
+
+        self.assertEqual(plugin.build_files, {'foo/1', 'foo/2'})
+        self.assertEqual(plugin.build_directories, {'foo'})
+
+        self.assertTrue(os.path.isfile(built_file1))
+        self.assertTrue(os.path.isfile(built_file2))
+
+    def test_build_drops_old_sources(self):
+        plugin = snapcraft.BasePlugin('test-part', options=None)
+
+        os.makedirs(os.path.join(plugin.sourcedir, 'foo'))
+
+        file1 = os.path.join(plugin.sourcedir, 'foo', '1')
+        file2 = os.path.join(plugin.sourcedir, 'foo', '2')
+        built_file1 = os.path.join(plugin.builddir, 'foo', '1')
+        built_file2 = os.path.join(plugin.builddir, 'foo', '2')
+        open(file1, 'w').close()
+        open(file2, 'w').close()
+
+        self.assertFalse(plugin.build_files)
+        self.assertFalse(plugin.build_directories)
+
+        plugin.build()
+
+        self.assertEqual(plugin.build_files, {'foo/1', 'foo/2'})
+        self.assertEqual(plugin.build_directories, {'foo'})
+
+        self.assertTrue(os.path.isfile(built_file1))
+        self.assertTrue(os.path.isfile(built_file2))
+
+        # Now remove one of the source files and build again. We expect file
+        # to also be removed from the build directory.
+        os.remove(file2)
+        plugin.build()
+
+        self.assertEqual(plugin.build_files, {'foo/1'})
+        self.assertEqual(plugin.build_directories, {'foo'})
+
+        self.assertTrue(os.path.isfile(built_file1))
+        self.assertFalse(os.path.exists(built_file2))
+
+    def test_build_resumes(self):
+        plugin = snapcraft.BasePlugin('test-part', options=None)
+
+        os.makedirs(os.path.join(plugin.sourcedir, 'foo'))
+
+        file1 = os.path.join(plugin.sourcedir, 'foo', '1')
+        built_file1 = os.path.join(plugin.builddir, 'foo', '1')
+        open(file1, 'w').close()
+
+        self.assertFalse(plugin.build_files)
+        self.assertFalse(plugin.build_directories)
+
+        plugin.build()
+
+        self.assertEqual(plugin.build_files, {'foo/1'})
+        self.assertEqual(plugin.build_directories, {'foo'})
+
+        # Place a build artifact. This should remain, even though built again.
+        artifact = os.path.join(plugin.builddir, 'artifact')
+        open(artifact, 'w').close()
+
+        plugin.build()
+
+        self.assertEqual(plugin.build_files, {'foo/1'})
+        self.assertEqual(plugin.build_directories, {'foo'})
+
+        self.assertTrue(os.path.isfile(built_file1))
+        self.assertTrue(os.path.isfile(artifact))
+
 
 class CleanBuildTestCase(tests.TestCase):
 

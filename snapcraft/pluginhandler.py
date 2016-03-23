@@ -85,6 +85,24 @@ class StageState(yaml.YAMLObject):
         return False
 
 
+class BuildState(yaml.YAMLObject):
+    yaml_tag = u'!BuildState'
+
+    def __init__(self, files, directories):
+        self.files = files
+        self.directories = directories
+
+    def __repr__(self):
+        return '{}(files: {}, directories: {})'.format(
+            self.__class__, self.files, self.directories)
+
+    def __eq__(self, other):
+        if type(other) is type(self):
+            return self.__dict__ == other.__dict__
+
+        return False
+
+
 class PluginHandler:
 
     @property
@@ -253,9 +271,11 @@ class PluginHandler:
             "supported".format(self.name))
 
     def build(self, force=False):
-        if not self.should_step_run('build', force):
-            self.notify_stage('Skipping build', ' (already ran)')
-            return
+        state = self.get_state('build')
+        if state:
+            self.code.build_files = state.files
+            self.code.build_directories = state.directories
+
         self.makedirs()
         self.notify_stage('Building')
         if self.code.stage_packages:
@@ -263,7 +283,8 @@ class PluginHandler:
             # again here in case the build was cleaned.
             self._unpack_stage_packages()
         self.code.build()
-        self.mark_done('build')
+        self.mark_done('build', BuildState(self.code.build_files,
+                                           self.code.build_directories))
 
     def clean_build(self):
         state_file = self._step_state_file('build')
