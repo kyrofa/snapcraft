@@ -33,6 +33,7 @@ from snapcraft import (
     pluginhandler,
     tests,
 )
+from snapcraft.plugins import nil
 
 
 class PluginTestCase(tests.TestCase):
@@ -330,6 +331,19 @@ class StateTestCase(tests.TestCase):
         self.handler.build()
 
         self.assertEqual('build', self.handler.last_step())
+
+    @patch.object(nil.NilPlugin, 'clean_build')
+    def test_clean_build_state(self, mock_clean_build):
+        self.assertEqual(None, self.handler.last_step())
+
+        self.handler.build()
+
+        self.handler.clean_build()
+
+        # Verify that the plugin had clean_step() called
+        mock_clean_build.assert_called_once_with()
+
+        self.assertEqual('pull', self.handler.last_step())
 
     def test_stage_state(self):
         self.assertEqual(None, self.handler.last_step())

@@ -222,6 +222,14 @@ class BasePlugin:
             ignore=lambda d, s: common.SNAPCRAFT_FILES
             if d is self.sourcedir else [])
 
+    def clean_build(self):
+        """Clean the artifacts that resulted from building this part.
+
+        The base implementation simply removes the build_basedir. Override this
+        method if your build process was more involved and needs more cleaning.
+        """
+        pass
+
     def snap_fileset(self):
         """Return a list of files to include or exclude in the resulting snap
 

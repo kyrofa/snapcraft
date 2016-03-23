@@ -200,3 +200,41 @@ class BuildTestCase(tests.TestCase):
         for file_ in common.SNAPCRAFT_FILES:
             self.assertFalse(
                 os.path.exists(os.path.join(plugin.builddir, file_)))
+
+
+class CleanBuildTestCase(tests.TestCase):
+
+    def test_do_not_follow_links(self):
+        options = tests.MockOptions(source='.')
+        plugin = snapcraft.BasePlugin('test_plugin', options)
+
+        os.makedirs(plugin.partdir)
+        os.symlink(os.path.abspath('.'), plugin.sourcedir)
+
+        # Create a file and a symlink to it
+        open('file', mode='w').close()
+        os.symlink('file', 'symlinkfile')
+
+        # Create a directory and a symlink to it
+        os.mkdir('dir')
+        os.symlink('dir', 'symlinkdir')
+        plugin.build()
+
+        # Make sure this is still a link
+        self.assertTrue(os.path.islink(plugin.sourcedir))
+
+        build_file_path = os.path.join(
+            plugin.builddir, 'file')
+        build_symlinkfile_path = os.path.join(
+            plugin.builddir, 'symlinkfile')
+
+        self.assertTrue(os.path.isfile(build_file_path))
+        self.assertTrue(os.path.islink(build_symlinkfile_path))
+
+        build_dir_path = os.path.join(
+            plugin.builddir, 'dir')
+        build_symlinkdir_path = os.path.join(
+            plugin.builddir, 'symlinkdir')
+
+        self.assertTrue(os.path.isdir(build_dir_path))
+        self.assertTrue(os.path.islink(build_symlinkdir_path))
