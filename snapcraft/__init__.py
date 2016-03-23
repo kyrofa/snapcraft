@@ -223,12 +223,16 @@ class BasePlugin:
     def clean_build(self):
         """Clean the artifacts that resulted from building this part.
 
-        The base implementation simply removes the build_basedir. Override this
-        method if your build process was more involved and needs more cleaning.
+        The base implementation simply removes the build_basedir and
+        installdir. Override this method if your build process was more
+        involved and needs more cleaning.
         """
 
         if os.path.exists(self.build_basedir):
             shutil.rmtree(self.build_basedir)
+
+        if os.path.exists(self.installdir):
+            shutil.rmtree(self.installdir)
 
     def snap_fileset(self):
         """Return a list of files to include or exclude in the resulting snap
