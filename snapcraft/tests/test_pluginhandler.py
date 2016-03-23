@@ -336,6 +336,7 @@ class StateTestCase(tests.TestCase):
     def test_clean_build_state(self, mock_clean_build):
         self.assertEqual(None, self.handler.last_step())
 
+        self.handler.mark_done('pull')
         self.handler.build()
 
         self.handler.clean_build()

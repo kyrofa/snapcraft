@@ -268,25 +268,12 @@ class PluginHandler:
     def clean_build(self):
         state_file = self._step_state_file('build')
         if not os.path.isfile(state_file):
-            self.notify_stage('Skipping cleaning build area for',
-                              '(already clean)')
+            self.notify_stage('Skipping cleaning build for', '(already clean)')
             return
 
-        self.notify_stage('Cleaning build area for')
-
-        with open(state_file, 'r') as f:
-            read = f.read()
-            state = yaml.load(read)
-
-        try:
-            self._clean_shared_area(self.stagedir, state,
-                                    project_staged_state)
-        except AttributeError:
-            raise MissingState(
-                "Failed to clean step 'stage': Missing necessary state. "
-                "Please run stage again.")
-
-        self.mark_cleaned('stage')
+        self.notify_stage('Cleaning build for')
+        self.code.clean_build()
+        self.mark_cleaned('build')
 
     def migratable_fileset_for(self, step):
         plugin_fileset = self.code.snap_fileset()
