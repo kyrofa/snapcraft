@@ -36,12 +36,13 @@ Additionally, this plugin uses the following plugin-specific keywords:
       Whether or not to include roscore with the part. Defaults to true.
 """
 
-import os
-import tempfile
+import glob
 import logging
-import shutil
+import os
 import re
+import shutil
 import subprocess
+import tempfile
 
 import snapcraft
 from snapcraft import (
@@ -115,7 +116,12 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
 
     def __init__(self, name, options, project):
         super().__init__(name, options, project)
-        self.build_packages.extend(['gcc', 'libc6-dev', 'make'])
+        # self.build_packages.extend(['libc6-dev', 'make'])
+
+        # Staging g++ so we get the one that built the rest of the ROS system
+        # we're about to pull down. Note that Catkin needs g++ even if it's
+        # only python packages being built.
+        self.stage_packages.append('g++')
 
         # Get a unique set of packages
         self.catkin_packages = set(options.catkin_packages)
@@ -269,10 +275,6 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
             shutil.rmtree(self._rosdep_path)
 
     @property
-    def gcc_version(self):
-        return self.run_output(['gcc', '-dumpversion'])
-
-    @property
     def rosdir(self):
         return os.path.join(self.installdir, 'opt', 'ros',
                             self.options.rosdistro)
@@ -388,22 +390,38 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
 
         # All the arguments that follow are meant for CMake
         catkincmd.append('--cmake-args')
+        catkincmd.extend(['-DCMAKE_C_FLAGS="$CFLAGS"',
+                          '-DCMAKE_LD_FLAGS="$LDFLAGS"'])
 
-        # Make sure we're using the compilers included in this .snap
-        catkincmd.extend([
-            '-DCMAKE_C_FLAGS="$CFLAGS"',
-            '-DCMAKE_CXX_FLAGS="$CPPFLAGS -I{} -I{}"'.format(
-                os.path.join(self.installdir, 'usr', 'include', 'c++',
-                             self.gcc_version),
-                os.path.join(self.installdir, 'usr', 'include',
-                             self.project.arch_triplet, 'c++',
-                             self.gcc_version)),
-            '-DCMAKE_LD_FLAGS="$LDFLAGS"',
-            '-DCMAKE_C_COMPILER={}'.format(
-                os.path.join(self.installdir, 'usr', 'bin', 'gcc')),
-            '-DCMAKE_CXX_COMPILER={}'.format(
-                os.path.join(self.installdir, 'usr', 'bin', 'g++'))
-        ])
+        # Make sure we're using the compilers included in this snap (if any)
+        c_compiler_bin_path = os.path.join(
+            self.installdir, 'usr', 'bin', 'gcc')
+        if os.path.isfile(c_compiler_bin_path):
+            catkincmd.append('-DCMAKE_C_COMPILER={}'.format(
+                c_compiler_bin_path))
+        cxx_compiler_bin_path = os.path.join(
+            self.installdir, 'usr', 'bin', 'g++')
+        if os.path.isfile(cxx_compiler_bin_path):
+            catkincmd.append('-DCMAKE_CXX_COMPILER={}'.format(
+                cxx_compiler_bin_path))
+
+        # Make sure we include the necessary paths (latest version only)
+        include_paths = []
+        paths = sorted(glob.glob(os.path.join(
+            self.installdir, 'usr', 'include', 'c++', '*')), reverse=True)
+        if len(paths) > 0:
+            include_paths.append(paths[0])
+        paths = sorted(glob.glob(os.path.join(
+            self.installdir, 'usr', 'include', self.project.arch_triplet,
+            'c++', '*')), reverse=True)
+        if len(paths) > 0:
+            include_paths.append(paths[0])
+
+        cxx_flags = '$CPPFLAGS'
+        if len(include_paths) > 0:
+            cxx_flags += ' {}'.format(
+                formatting_utils.combine_paths(include_paths, '-I', ' '))
+        catkincmd.append('-DCMAKE_CXX_FLAGS="{}"'.format(cxx_flags))
 
         # This command must run in bash due to a bug in Catkin that causes it
         # to explode if there are spaces in the cmake args (which there are).
@@ -444,12 +462,6 @@ def _find_system_dependencies(catkin_packages, rosdep):
                     "rosdep database.".format(dependency))
 
             system_dependencies[dependency] = these_dependencies
-
-            # TODO: Not sure why this isn't pulled in by roscpp. Can it
-            # be compiled by clang, etc.? If so, perhaps this should be
-            # left up to the developer.
-            if dependency == 'roscpp':
-                system_dependencies['g++'] = ['g++']
 
     # Finally, return a list of all system dependencies
     return set(item for sublist in system_dependencies.values()

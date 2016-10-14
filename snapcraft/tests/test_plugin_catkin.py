@@ -37,15 +37,43 @@ class _CompareContainers():
     def __eq__(self, container):
         self.test.assertEqual(len(container), len(self.expected),
                               'Expected {} items to be in container, '
-                              'got {}'.format(len(self.expected),
-                                              len(container)))
+                              'got {}: {!r}'.format(len(self.expected),
+                                              len(container), container))
 
         for expectation in self.expected:
             self.test.assertTrue(expectation in container,
-                                 'Expected "{}" to be in container'
-                                 .format(expectation))
+                                 'Expected "{}" to be in container {!r}'
+                                 .format(expectation, container))
 
         return True
+
+
+class _CheckBuildCommand():
+    def __init__(self, test, expected_args):
+        self.test = test
+        self.expected_args = expected_args
+
+    def __eq__(self, args):
+        self.test.assertEqual(args[0], 'catkin_make_isolated')
+
+        command = ' '.join(args)
+        for expected_arg in self.expected_args:
+            self.test.assertTrue(
+                expected_arg in command,
+                'Expected {!r} to be in command {!r}'.format(
+                    expected_arg, command))
+
+        return True
+
+
+class _CheckBuildCommandCMakeArgs(_CompareContainers):
+    def __eq__(self, args):
+        self.test.assertEqual(args[0], 'catkin_make_isolated')
+
+        index = args.index('--cmake-args')
+        cmake_args = args[index+1:]
+
+        return super().__eq__(cmake_args)
 
 
 class CatkinPluginTestCase(tests.TestCase):
@@ -457,22 +485,14 @@ class CatkinPluginTestCase(tests.TestCase):
 
         prepare_build_mock.assert_called_once_with()
 
-        # Matching like this for order independence (otherwise it would be
-        # quite fragile)
-        class check_build_command():
-            def __eq__(self, args):
-                command = ' '.join(args)
-                return (
-                    args[0] == 'catkin_make_isolated' and
-                    '--install' in command and
-                    '--pkg my_package' in command and
-                    '--directory {}'.format(plugin.builddir) in command and
-                    '--install-space {}'.format(plugin.rosdir) in command and
-                    '--source-space {}'.format(os.path.join(
-                        plugin.builddir,
-                        plugin.options.source_space)) in command)
-
-        bashrun_mock.assert_called_with(check_build_command())
+        bashrun_mock.assert_called_with(_CheckBuildCommand(self, [
+            '--install',
+            '--pkg my_package',
+            '--directory {}'.format(plugin.builddir),
+            '--install-space {}'.format(plugin.rosdir),
+            '--source-space {}'.format(os.path.join(
+                plugin.builddir,
+                plugin.options.source_space))]))
 
         self.assertFalse(
             self.dependencies_mock.called,
@@ -483,10 +503,84 @@ class CatkinPluginTestCase(tests.TestCase):
     @mock.patch.object(catkin.CatkinPlugin, 'run')
     @mock.patch.object(catkin.CatkinPlugin, '_run_in_bash')
     @mock.patch.object(catkin.CatkinPlugin, 'run_output', return_value='foo')
+    def test_build_cmake_args_without_compiler(self, run_output_mock,
+                                               bashrun_mock, run_mock):
+        plugin = catkin.CatkinPlugin('test-part', self.properties,
+                                     self.project_options)
+        os.makedirs(os.path.join(plugin.sourcedir, 'src'))
+
+        plugin.build()
+
+        bashrun_mock.assert_called_with(_CheckBuildCommandCMakeArgs(self, [
+            '-DCMAKE_C_FLAGS="$CFLAGS"',
+            '-DCMAKE_LD_FLAGS="$LDFLAGS"',
+            '-DCMAKE_CXX_FLAGS="$CPPFLAGS"'
+        ]))
+
+    @mock.patch.object(catkin.CatkinPlugin, 'run')
+    @mock.patch.object(catkin.CatkinPlugin, '_run_in_bash')
+    def test_build_cmake_args_with_compiler(self, bashrun_mock, run_mock):
+        plugin = catkin.CatkinPlugin('test-part', self.properties,
+                                     self.project_options)
+        os.makedirs(os.path.join(plugin.sourcedir, 'src'))
+
+        # Pretend gcc and g++ are installed
+        gcc_bin_path = os.path.join(plugin.installdir, 'usr', 'bin', 'gcc')
+        gpp_bin_path = os.path.join(plugin.installdir, 'usr', 'bin', 'g++')
+        os.makedirs(os.path.dirname(gcc_bin_path))
+        open(gcc_bin_path, 'w').close()
+        open(gpp_bin_path, 'w').close()
+
+        include_path = os.path.join(
+            plugin.installdir, 'usr', 'include', 'c++', '5.6.7')
+        os.makedirs(include_path)
+        arch_include_path = os.path.join(
+            plugin.installdir, 'usr', 'include', plugin.project.arch_triplet,
+            'c++', '5.6.7')
+        os.makedirs(arch_include_path)
+
+        plugin.build()
+
+        bashrun_mock.assert_called_with(_CheckBuildCommandCMakeArgs(self, [
+            '-DCMAKE_C_FLAGS="$CFLAGS"',
+            '-DCMAKE_CXX_FLAGS="$CPPFLAGS -I{} -I{}"'.format(
+                include_path, arch_include_path),
+            '-DCMAKE_LD_FLAGS="$LDFLAGS"',
+            '-DCMAKE_C_COMPILER={}'.format(gcc_bin_path),
+            '-DCMAKE_CXX_COMPILER={}'.format(gpp_bin_path)
+        ]))
+
+    @mock.patch.object(catkin.CatkinPlugin, 'run')
+    @mock.patch.object(catkin.CatkinPlugin, '_run_in_bash')
+    def test_build_cmake_args_partial_compiler(self, bashrun_mock, run_mock):
+        plugin = catkin.CatkinPlugin('test-part', self.properties,
+                                     self.project_options)
+        os.makedirs(os.path.join(plugin.sourcedir, 'src'))
+
+        # Pretend only g++ is installed
+        gpp_bin_path = os.path.join(plugin.installdir, 'usr', 'bin', 'g++')
+        os.makedirs(os.path.dirname(gpp_bin_path))
+        open(gpp_bin_path, 'w').close()
+
+        include_path = os.path.join(
+            plugin.installdir, 'usr', 'include', 'c++', '5.6.7')
+        os.makedirs(include_path)
+
+        plugin.build()
+
+        bashrun_mock.assert_called_with(_CheckBuildCommandCMakeArgs(self, [
+            '-DCMAKE_C_FLAGS="$CFLAGS"',
+            '-DCMAKE_CXX_FLAGS="$CPPFLAGS -I{}"'.format(include_path),
+            '-DCMAKE_LD_FLAGS="$LDFLAGS"',
+            '-DCMAKE_CXX_COMPILER={}'.format(gpp_bin_path)
+        ]))
+
+    @mock.patch.object(catkin.CatkinPlugin, 'run')
+    @mock.patch.object(catkin.CatkinPlugin, '_run_in_bash')
     @mock.patch.object(catkin.CatkinPlugin, '_prepare_build')
     @mock.patch.object(catkin.CatkinPlugin, '_finish_build')
     def test_build_multiple(self, finish_build_mock, prepare_build_mock,
-                            run_output_mock, bashrun_mock, run_mock):
+                            bashrun_mock, run_mock):
         self.properties.catkin_packages.append('package_2')
 
         plugin = catkin.CatkinPlugin('test-part', self.properties,
@@ -515,8 +609,7 @@ class CatkinPluginTestCase(tests.TestCase):
         finish_build_mock.assert_called_once_with()
 
     @mock.patch.object(catkin.CatkinPlugin, 'run')
-    @mock.patch.object(catkin.CatkinPlugin, 'run_output', return_value='foo')
-    def test_build_runs_in_bash(self, run_output_mock, run_mock):
+    def test_build_runs_in_bash(self, run_mock):
         plugin = catkin.CatkinPlugin('test-part', self.properties,
                                      self.project_options)
         os.makedirs(os.path.join(plugin.sourcedir, 'src'))
