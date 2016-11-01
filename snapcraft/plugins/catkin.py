@@ -116,12 +116,12 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
 
     def __init__(self, name, options, project):
         super().__init__(name, options, project)
-        # self.build_packages.extend(['libc6-dev', 'make'])
+        self.build_packages.extend(['make'])
 
         # Staging g++ so we get the one that built the rest of the ROS system
         # we're about to pull down. Note that Catkin needs g++ even if it's
         # only python packages being built.
-        self.stage_packages.append('g++')
+        self.stage_packages.extend(['gcc', 'g++', 'libc6-dev'])
 
         # Get a unique set of packages
         self.catkin_packages = set(options.catkin_packages)
@@ -390,38 +390,17 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
 
         # All the arguments that follow are meant for CMake
         catkincmd.append('--cmake-args')
-        catkincmd.extend(['-DCMAKE_C_FLAGS="$CFLAGS"',
+        catkincmd.extend(['-DCMAKE_SYSROOT={}'.format(self.installdir),
+                          '-DCMAKE_C_COMPILER_WORKS:STRING=1',
+                          '-DCMAKE_CXX_COMPILER_WORKS:STRING=1',
+                          '-DCMAKE_PREFIX_PATH={}'.format(self.installdir),
+                          '-DCMAKE_FIND_ROOT_PATH={}'.format(self.installdir),
+                          '-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH',
+                          '-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH',
+                          '-DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH',
+                          '-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=BOTH',
+                          '-DCMAKE_C_FLAGS="$CFLAGS"',
                           '-DCMAKE_LD_FLAGS="$LDFLAGS"'])
-
-        # Make sure we're using the compilers included in this snap (if any)
-        c_compiler_bin_path = os.path.join(
-            self.installdir, 'usr', 'bin', 'gcc')
-        if os.path.isfile(c_compiler_bin_path):
-            catkincmd.append('-DCMAKE_C_COMPILER={}'.format(
-                c_compiler_bin_path))
-        cxx_compiler_bin_path = os.path.join(
-            self.installdir, 'usr', 'bin', 'g++')
-        if os.path.isfile(cxx_compiler_bin_path):
-            catkincmd.append('-DCMAKE_CXX_COMPILER={}'.format(
-                cxx_compiler_bin_path))
-
-        # Make sure we include the necessary paths (latest version only)
-        include_paths = []
-        paths = sorted(glob.glob(os.path.join(
-            self.installdir, 'usr', 'include', 'c++', '*')), reverse=True)
-        if len(paths) > 0:
-            include_paths.append(paths[0])
-        paths = sorted(glob.glob(os.path.join(
-            self.installdir, 'usr', 'include', self.project.arch_triplet,
-            'c++', '*')), reverse=True)
-        if len(paths) > 0:
-            include_paths.append(paths[0])
-
-        cxx_flags = '$CPPFLAGS'
-        if len(include_paths) > 0:
-            cxx_flags += ' {}'.format(
-                formatting_utils.combine_paths(include_paths, '-I', ' '))
-        catkincmd.append('-DCMAKE_CXX_FLAGS="{}"'.format(cxx_flags))
 
         # This command must run in bash due to a bug in Catkin that causes it
         # to explode if there are spaces in the cmake args (which there are).
