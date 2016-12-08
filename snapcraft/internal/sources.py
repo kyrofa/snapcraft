@@ -69,6 +69,8 @@ cases you want to refer to the help text for the specific plugin.
 """
 
 import copy
+import filecmp
+import functools
 import glob
 import logging
 import os
@@ -534,23 +536,18 @@ class Local(Base):
         elif os.path.isdir(self.source_dir):
             shutil.rmtree(self.source_dir)
 
-        current_dir = os.getcwd()
         source_abspath = os.path.abspath(self.source)
-
-        def ignore(directory, files):
-            if directory == source_abspath or \
-               directory == current_dir:
-                ignored = copy.copy(common.SNAPCRAFT_FILES)
-                snaps = glob.glob(os.path.join(directory, '*.snap'))
-                if snaps:
-                    snaps = [os.path.basename(s) for s in snaps]
-                    ignored += snaps
-                return ignored
-            else:
-                return []
-
+        ignore = functools.partial(_ignore, source_abspath, os.getcwd())
         shutil.copytree(source_abspath, self.source_dir,
                         copy_function=file_utils.link_or_copy, ignore=ignore)
+
+    def update(self):
+        """Update already-pulled source."""
+
+        source_abspath = os.path.abspath(self.source)
+        ignore = functools.partial(_ignore, source_abspath, os.getcwd())
+        comparison = filecmp.dircmp(source_abspath, self.source_dir)
+        _recursively_update(comparison, ignore)
 
 
 def get(sourcedir, builddir, options):
@@ -620,3 +617,46 @@ def _get_source_type_from_uri(source, ignore_errors=False):
         raise ValueError('local source is not a directory')
 
     return source_type
+
+
+def _ignore(source, current_directory, directory, files):
+    if directory == source or \
+       directory == current_directory:
+        ignored = copy.copy(common.SNAPCRAFT_FILES)
+        snaps = glob.glob(os.path.join(directory, '*.snap'))
+        if snaps:
+            snaps = [os.path.basename(s) for s in snaps]
+            ignored += snaps
+        return ignored
+    else:
+        return []
+
+
+def _recursively_update(comparison, ignore):
+    source = comparison.left
+    destination = comparison.right
+
+    # Copy new files
+    _copy_entries(comparison.left_only, source, destination, ignore)
+
+    # Copy updated files
+    _copy_entries(comparison.diff_files, source, destination, ignore)
+
+    # Do the same for any subdirectories
+    for directory_name, directory_comparison in comparison.subdirs.items():
+        _recursively_update(directory_comparison, ignore)
+
+
+def _copy_entries(entries, source, destination, ignore):
+    for entry in entries:
+        source_path = os.path.join(source, entry)
+        destination_path = os.path.join(destination, entry)
+
+        if os.path.isdir(source_path):
+            shutil.copytree(
+                source_path, destination_path,
+                copy_function=file_utils.link_or_copy, ignore=ignore)
+        else:
+            files_to_ignore = ignore(os.path.dirname(source_path), [])
+            if os.path.basename(source_path) not in files_to_ignore:
+                file_utils.link_or_copy(source_path, destination_path)

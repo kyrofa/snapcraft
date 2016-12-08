@@ -15,6 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import copy
+import filecmp
 import os
 import shutil
 import tarfile
@@ -22,6 +23,12 @@ import unittest.mock
 
 import fixtures
 import libarchive
+
+from testtools.matchers import (
+    Equals,
+    FileExists,
+    Not
+)
 
 from snapcraft.internal import common, sources
 from snapcraft import tests
@@ -801,8 +808,8 @@ class TestLocal(tests.TestCase):
         # hardlink.
         self.assertFalse(os.path.islink('destination'))
         self.assertFalse(os.path.islink(os.path.join('destination', 'dir')))
-        self.assertGreater(
-            os.stat(os.path.join('destination', 'dir', 'file')).st_nlink, 1)
+        self.assertThat(
+            os.path.join('destination', 'dir', 'file'), tests.IsHardlink())
 
     def test_pull_with_existing_source_link_creates_symlink(self):
         os.makedirs(os.path.join('src', 'dir'))
@@ -816,8 +823,8 @@ class TestLocal(tests.TestCase):
 
         self.assertFalse(os.path.islink('destination'))
         self.assertFalse(os.path.islink(os.path.join('destination', 'dir')))
-        self.assertGreater(
-            os.stat(os.path.join('destination', 'dir', 'file')).st_nlink, 1)
+        self.assertThat(
+            os.path.join('destination', 'dir', 'file'), tests.IsHardlink())
 
     def test_pull_with_existing_source_file_wipes_and_creates_hardlinks(self):
         os.makedirs(os.path.join('src', 'dir'))
@@ -832,8 +839,8 @@ class TestLocal(tests.TestCase):
         self.assertFalse(os.path.isfile('destination'))
         self.assertFalse(os.path.islink('destination'))
         self.assertFalse(os.path.islink(os.path.join('destination', 'dir')))
-        self.assertGreater(
-            os.stat(os.path.join('destination', 'dir', 'file')).st_nlink, 1)
+        self.assertThat(
+            os.path.join('destination', 'dir', 'file'), tests.IsHardlink())
 
     def test_pulling_twice_with_existing_source_dir_recreates_hardlinks(self):
         os.makedirs(os.path.join('src', 'dir'))
@@ -849,8 +856,8 @@ class TestLocal(tests.TestCase):
         # hardlink.
         self.assertFalse(os.path.islink('destination'))
         self.assertFalse(os.path.islink(os.path.join('destination', 'dir')))
-        self.assertGreater(
-            os.stat(os.path.join('destination', 'dir', 'file')).st_nlink, 1)
+        self.assertThat(
+            os.path.join('destination', 'dir', 'file'), tests.IsHardlink())
 
     def test_pull_ignores_snapcraft_specific_data(self):
         # Make the snapcraft-specific directories
@@ -886,8 +893,148 @@ class TestLocal(tests.TestCase):
         # Verify that the real stuff made it in.
         self.assertFalse(os.path.islink('destination'))
         self.assertFalse(os.path.islink(os.path.join('destination', 'dir')))
-        self.assertGreater(
-            os.stat(os.path.join('destination', 'dir', 'file')).st_nlink, 1)
+        self.assertThat(
+            os.path.join('destination', 'dir', 'file'), tests.IsHardlink())
+
+    def test_update_grabs_new_file(self):
+        os.makedirs(os.path.join('src', 'dir'))
+        open(os.path.join('src', 'dir', 'file1'), 'w').close()
+
+        os.mkdir('destination')
+
+        local = sources.Local('src', 'destination')
+        local.pull()
+
+        # Verify that file1 exists, but file2 doesn't.
+        file1_path = os.path.join('destination', 'dir', 'file1')
+        file2_path = os.path.join('destination', 'dir', 'file2')
+        self.expectThat(file1_path, FileExists())
+        self.expectThat(file1_path, tests.IsHardlink())
+        self.expectThat(file2_path, Not(FileExists()))
+
+        # Now update the original source, adding file2.
+        open(os.path.join('src', 'dir', 'file2'), 'w').close()
+
+        local.update()
+
+        # Verify that now both file1 and file2 exist.
+        for path in {file1_path, file2_path}:
+            self.expectThat(path, FileExists())
+            self.expectThat(path, tests.IsHardlink())
+
+    @unittest.mock.patch('os.link', side_effect=OSError)
+    def test_update_grabs_modified_file(self, mock_link):
+        """Verify that an update occurs if file is modified.
+
+        Note that this test disables the hard-linking code. Otherwise the file
+        contents would always be identical, which would defeat the purpose of
+        this test.
+        """
+
+        os.makedirs(os.path.join('src', 'dir'))
+        source_file1_path = os.path.join('src', 'dir', 'file1')
+        source_file2_path = os.path.join('src', 'dir', 'file2')
+        with open(source_file1_path, 'w') as f:
+            f.write('file1')
+        with open(source_file2_path, 'w') as f:
+            f.write('file2')
+
+        os.mkdir('destination')
+
+        local = sources.Local('src', 'destination')
+        local.pull()
+
+        # Verify that both files exist, and check their contents.
+        file1_path = os.path.join('destination', 'dir', 'file1')
+        file2_path = os.path.join('destination', 'dir', 'file2')
+        for path in {file1_path, file2_path}:
+            self.expectThat(path, FileExists())
+            self.expectThat(path, Not(tests.IsHardlink()))
+        with open(file1_path) as f:
+            self.expectThat(f.read(), Equals('file1'))
+        with open(file2_path) as f:
+            self.expectThat(f.read(), Equals('file2'))
+
+        # Now update the contents of file1
+        with open(source_file1_path, 'w') as f:
+            f.write('file1 updated')
+
+        # Now update and verify that file1 was updated, and file2 was not.
+        local.update()
+        for path in {file1_path, file2_path}:
+            self.expectThat(path, FileExists())
+            self.expectThat(path, Not(tests.IsHardlink()))
+        with open(file1_path) as f:
+            self.expectThat(f.read(), Equals('file1 updated'))
+        with open(file2_path) as f:
+            self.expectThat(f.read(), Equals('file2'))
+
+    def test_update_grabs_nested_files(self):
+        """Verify that an update occurs through multiple nestings."""
+
+        os.mkdir('src')
+        os.mkdir('destination')
+
+        # Pull the empty source
+        local = sources.Local('src', 'destination')
+        local.pull()
+
+        # Now fill out the source with a well-nested structure.
+        os.makedirs(os.path.join('src', 'dir1', 'dir2'))
+        source_file1_path = os.path.join('src', 'file1')
+        source_file2_path = os.path.join('src', 'dir1', 'file2')
+        source_file3_path = os.path.join('src', 'dir1', 'dir2', 'file3')
+        for path in {source_file1_path, source_file2_path, source_file3_path}:
+            open(path, 'w').close()
+
+        # Update, and verify the nested files all made it in.
+        local.update()
+        file1_path = os.path.join('destination', 'file1')
+        file2_path = os.path.join('destination', 'dir1', 'file2')
+        file3_path = os.path.join('destination', 'dir1', 'dir2', 'file3')
+        for path in {file1_path, file2_path, file3_path}:
+            self.expectThat(path, FileExists())
+            self.expectThat(path, tests.IsHardlink())
+
+    @unittest.mock.patch('os.link', side_effect=OSError)
+    def test_update_ignores_same_file_different_stat(self, mock_link):
+        """Verify that an update doesn't occur even with new modification time.
+
+        Note that this test disables the hard-linking code. Otherwise the
+        modification time would always be identical, which would defeat the
+        purpose of this test.
+        """
+
+        os.makedirs(os.path.join('src', 'dir'))
+        source_file_path = os.path.join('src', 'dir', 'file')
+        open(source_file_path, 'w').close()
+
+        os.mkdir('destination')
+
+        local = sources.Local('src', 'destination')
+        local.pull()
+
+        # Verify that the pulled file exists.
+        file_path = os.path.join('destination', 'dir', 'file')
+        self.expectThat(file_path, FileExists())
+        self.expectThat(file_path, Not(tests.IsHardlink()))
+
+        # Now update the modification time of the file (without altering its
+        # contents).
+        status = os.stat(source_file_path)
+        access_time = status.st_atime_ns
+        modification_time = status.st_mtime_ns
+        new_modification_time = modification_time + 1
+        os.utime(source_file_path, ns=(access_time, new_modification_time))
+
+        # Clear filecmp cache so we don't run into timing errors.
+        filecmp.clear_cache()
+
+        # Now update, and verify that the timestamp is still the old one (i.e.
+        # it wasn't updated as its contents didn't differ).
+        local.update()
+        self.expectThat(
+            os.stat(file_path).st_mtime_ns, Equals(modification_time))
 
 
 class TestLocalIgnores(tests.TestCase):

@@ -50,6 +50,21 @@ class MockOptions:
         self.disable_parallel = disable_parallel
 
 
+class IsHardlink:
+    """Match is a file path is a hard link."""
+
+    def __str__(self):
+        return 'IsHardlink()'
+
+    def match(self, file_path):
+        st_nlink = os.stat(file_path).st_nlink
+        if st_nlink < 2:
+            return testtools.matchers.Mismatch(
+                '{!r} is not a hardlink (expected st_nlink to be at least 2, '
+                'got {})'.format(file_path, st_nlink))
+        return None
+
+
 class TestCase(testscenarios.WithScenarios, testtools.TestCase):
 
     def setUp(self):
@@ -103,6 +118,9 @@ class TestCase(testscenarios.WithScenarios, testtools.TestCase):
             self.assertTrue(os.path.exists(os.path.join(state_dir, step)),
                             'Expected {!r} to be run for {}'.format(
                                 step, part_name))
+
+    def assertIsHardLink(self, file_path):
+        self.assertGreater(os.stat(file_path).st_nlink, 1)
 
 
 class TestWithFakeRemoteParts(TestCase):
