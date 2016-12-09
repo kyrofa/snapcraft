@@ -334,6 +334,14 @@ class PluginHandler:
             pull_properties, self._part_properties,
             self._project_options))
 
+    def update_pull(self):
+        if self.source_handler:
+            updater = getattr(self.source_handler, 'update')
+            if updater:
+                self.notify_part_progress('Pulling updates for')
+                return updater()
+        return False
+
     def clean_pull(self, hint=''):
         if self.is_clean('pull'):
             hint = '{} {}'.format(hint, '(already clean)').strip()

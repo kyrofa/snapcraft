@@ -137,8 +137,6 @@ class _Executor:
                     self._handle_dirty(part, step, dirty_report)
                 elif not (part.should_step_run(step)):
                     steps_run[part.name].add(step)
-                    part.notify_part_progress('Skipping {}'.format(step),
-                                              '(already ran)')
 
         return steps_run
 
@@ -158,7 +156,11 @@ class _Executor:
             if step == 'stage':
                 pluginhandler.check_for_collisions(self.config.all_parts)
             for part in parts:
-                if step not in self._steps_run[part.name]:
+                if step in self._steps_run[part.name]:
+                    if not self._update_step(step, part, part_names):
+                        part.notify_part_progress('Skipping {}'.format(step),
+                                                  '(already ran)')
+                else:
                     self._run_step(step, part, part_names)
                     self._steps_run[part.name].add(step)
 
@@ -196,6 +198,10 @@ class _Executor:
 
         part = _replace_in_part(part)
         getattr(part, step)()
+
+    def _update_step(self, step, part, part_names):
+        common.reset_env()
+        getattr(part, 'update_{}'.format(step))()
 
     def _create_meta(self, step, part_names):
         if step == 'prime' and part_names == self.config.part_names:

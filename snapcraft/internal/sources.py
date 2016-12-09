@@ -69,9 +69,11 @@ cases you want to refer to the help text for the specific plugin.
 """
 
 import copy
+import contextlib
 import filecmp
 import functools
 import glob
+import itertools
 import logging
 import os
 import os.path
@@ -117,6 +119,27 @@ class IncompatibleOptionsError(Exception):
 
     def __init__(self, message):
         self.message = message
+
+
+class Updater:
+
+    def __init__(self, check, update):
+        self._check = check
+        self._update = update
+        self._check_called = False
+
+    def check(self):
+        self._check_called = True
+        if callable(self._check):
+            return self._check()
+
+        return self._check
+
+    def update(self):
+        if not self._check_called:
+            self.check()
+
+        self._update()
 
 
 class Base:
@@ -541,13 +564,40 @@ class Local(Base):
         shutil.copytree(source_abspath, self.source_dir,
                         copy_function=file_utils.link_or_copy, ignore=ignore)
 
-    def update(self):
-        """Update already-pulled source."""
+    @contextlib.contextmanager
+    def updater(self):
+        """Return an Updater instance to update already-pulled source."""
 
         source_abspath = os.path.abspath(self.source)
         ignore = functools.partial(_ignore, source_abspath, os.getcwd())
-        comparison = filecmp.dircmp(source_abspath, self.source_dir)
-        _recursively_update(comparison, ignore)
+
+        files = set()
+        directories = set()
+
+        def check():
+            nonlocal files
+            nonlocal directories
+            (files, directories) = _recursive_directory_difference(
+                left_root=source_abspath, right_root=self.source_dir)
+            return files or directories
+
+        def update():
+            # First copy directories.
+            for directory in directories:
+                source = os.path.join(source_abspath, directory)
+                destination = os.path.join(self.source_dir, directory)
+
+                shutil.copytree(
+                    source, destination, copy_function=file_utils.link_or_copy,
+                    ignore=ignore)
+
+            # Now copy files
+            for file_path in files:
+                source = os.path.join(source_abspath, file_path)
+                destination = os.path.join(self.source_dir, file_path)
+                file_utils.link_or_copy(source, destination)
+
+        yield Updater(check, update)
 
 
 def get(sourcedir, builddir, options):
@@ -632,31 +682,33 @@ def _ignore(source, current_directory, directory, files):
         return []
 
 
-def _recursively_update(comparison, ignore):
-    source = comparison.left
-    destination = comparison.right
+def _recursive_directory_difference(*, left_root=None, right_root=None,
+                                    comparison=None):
+    """Recursively determine entries in left that differ from right.
 
-    # Copy new files
-    _copy_entries(comparison.left_only, source, destination, ignore)
+    This will return a tuple of (files, directories) that differ. Note that
+    this function doesn't determine any differences from right to left.
+    """
 
-    # Copy updated files
-    _copy_entries(comparison.diff_files, source, destination, ignore)
+    if not comparison:
+        comparison = filecmp.dircmp(left_root, right_root)
 
-    # Do the same for any subdirectories
-    for directory_name, directory_comparison in comparison.subdirs.items():
-        _recursively_update(directory_comparison, ignore)
+    files = set()
+    directories = set()
 
-
-def _copy_entries(entries, source, destination, ignore):
-    for entry in entries:
-        source_path = os.path.join(source, entry)
-        destination_path = os.path.join(destination, entry)
-
-        if os.path.isdir(source_path):
-            shutil.copytree(
-                source_path, destination_path,
-                copy_function=file_utils.link_or_copy, ignore=ignore)
+    for entry in itertools.chain(comparison.left_only, comparison.diff_files):
+        path = os.path.relpath(comparison.left, left_root)
+        entry = os.path.join(path, entry)
+        if os.path.isdir(os.path.join(left_root, entry)):
+            directories.add(entry)
         else:
-            files_to_ignore = ignore(os.path.dirname(source_path), [])
-            if os.path.basename(source_path) not in files_to_ignore:
-                file_utils.link_or_copy(source_path, destination_path)
+            files.add(entry)
+
+    for directory_name, directory_comparison in comparison.subdirs.items():
+        (more_files, more_directories) = _recursive_directory_difference(
+            left_root=left_root, right_root=right_root,
+            comparison=directory_comparison)
+        files.update(more_files)
+        directories.update(more_directories)
+
+    return (files, directories)

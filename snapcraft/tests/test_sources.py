@@ -915,7 +915,10 @@ class TestLocal(tests.TestCase):
         # Now update the original source, adding file2.
         open(os.path.join('src', 'dir', 'file2'), 'w').close()
 
-        local.update()
+        with local.updater() as updater:
+            self.assertTrue(
+                updater.check(), 'Expected updates to be available')
+            updater.update()
 
         # Verify that now both file1 and file2 exist.
         for path in {file1_path, file2_path}:
@@ -960,7 +963,11 @@ class TestLocal(tests.TestCase):
             f.write('file1 updated')
 
         # Now update and verify that file1 was updated, and file2 was not.
-        local.update()
+        with local.updater() as updater:
+            self.assertTrue(
+                updater.check(), 'Expected updates to be available')
+            updater.update()
+
         for path in {file1_path, file2_path}:
             self.expectThat(path, FileExists())
             self.expectThat(path, Not(tests.IsHardlink()))
@@ -988,7 +995,10 @@ class TestLocal(tests.TestCase):
             open(path, 'w').close()
 
         # Update, and verify the nested files all made it in.
-        local.update()
+        with local.updater() as updater:
+            self.assertTrue(
+                updater.check(), 'Expected updates to be available')
+            updater.update()
         file1_path = os.path.join('destination', 'file1')
         file2_path = os.path.join('destination', 'dir1', 'file2')
         file3_path = os.path.join('destination', 'dir1', 'dir2', 'file3')
@@ -1032,7 +1042,10 @@ class TestLocal(tests.TestCase):
 
         # Now update, and verify that the timestamp is still the old one (i.e.
         # it wasn't updated as its contents didn't differ).
-        local.update()
+        with local.updater() as updater:
+            self.assertFalse(
+                updater.check(), 'Expected no updates to be available')
+            updater.update()
         self.expectThat(
             os.stat(file_path).st_mtime_ns, Equals(modification_time))
 
