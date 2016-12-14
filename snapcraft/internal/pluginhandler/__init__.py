@@ -478,42 +478,10 @@ class PluginHandler:
         self.notify_part_progress('Priming')
         snap_files, snap_dirs = self.migratable_fileset_for('snap')
         _migrate_files(snap_files, snap_dirs, self.stagedir, self.snapdir)
-        dependencies = _find_dependencies(self.snapdir, snap_files)
-
-        # Split the necessary dependencies into their corresponding location.
-        # We'll both migrate and track the system dependencies, but we'll only
-        # track the part and staged dependencies, since they should have
-        # already been primed by other means, and migrating them again could
-        # potentially override the `stage` or `snap` filtering.
-        part_dependencies = set()
-        staged_dependencies = set()
-        primed_dependencies = set()
-        system_dependencies = set()
-        for file_path in dependencies:
-            if file_path.startswith(self.installdir):
-                part_dependencies.add(
-                    os.path.relpath(file_path, self.installdir))
-            elif file_path.startswith(self.stagedir):
-                staged_dependencies.add(
-                    os.path.relpath(file_path, self.stagedir))
-            elif file_path.startswith(self.snapdir):
-                primed_dependencies.add(
-                    os.path.relpath(file_path, self.snapdir))
-            else:
-                system_dependencies.add(file_path.lstrip('/'))
-
-        part_dependency_paths = {os.path.dirname(d) for d in part_dependencies}
-        staged_dependency_paths = {os.path.dirname(d) for d in
-                                   staged_dependencies}
-        system_dependency_paths = {os.path.dirname(d) for d in
-                                   system_dependencies}
-        # Lots of dependencies are linked with a symlink, so we need to make
-        # sure we follow those symlinks when we migrate the dependencies.
-        _migrate_files(system_dependencies, system_dependency_paths, '/',
-                       self.snapdir, follow_symlinks=True)
-
-        dependency_paths = (part_dependency_paths | staged_dependency_paths |
-                            system_dependency_paths)
+        dependency_paths = set()
+        if not os.getenv('SNAPCRAFT_SKIP_SYSTEM_DEPENDENCY_MIGRATION'):
+            dependency_paths = _migrate_system_dependencies(
+                self.installdir, self.stagedir, self.snapdir, snap_files)
 
         self.mark_prime_done(snap_files, snap_dirs, dependency_paths)
 
@@ -626,6 +594,45 @@ class PluginHandler:
 
         if not index or index <= common.COMMAND_ORDER.index('pull'):
             self.clean_pull(hint)
+
+
+def _migrate_system_dependencies(installdir, stagedir, snapdir, snap_files):
+    dependencies = _find_dependencies(snapdir, snap_files)
+
+    # Split the necessary dependencies into their corresponding location.
+    # We'll both migrate and track the system dependencies, but we'll only
+    # track the part and staged dependencies, since they should have
+    # already been primed by other means, and migrating them again could
+    # potentially override the `stage` or `snap` filtering.
+    part_dependencies = set()
+    staged_dependencies = set()
+    primed_dependencies = set()
+    system_dependencies = set()
+    for file_path in dependencies:
+        if file_path.startswith(installdir):
+            part_dependencies.add(
+                os.path.relpath(file_path, installdir))
+        elif file_path.startswith(stagedir):
+            staged_dependencies.add(
+                os.path.relpath(file_path, stagedir))
+        elif file_path.startswith(snapdir):
+            primed_dependencies.add(
+                os.path.relpath(file_path, snapdir))
+        else:
+            system_dependencies.add(file_path.lstrip('/'))
+
+    part_dependency_paths = {os.path.dirname(d) for d in part_dependencies}
+    staged_dependency_paths = {os.path.dirname(d) for d in
+                               staged_dependencies}
+    system_dependency_paths = {os.path.dirname(d) for d in
+                               system_dependencies}
+    # Lots of dependencies are linked with a symlink, so we need to make
+    # sure we follow those symlinks when we migrate the dependencies.
+    _migrate_files(system_dependencies, system_dependency_paths, '/',
+                   snapdir, follow_symlinks=True)
+
+    return (part_dependency_paths | staged_dependency_paths |
+            system_dependency_paths)
 
 
 def _expand_part_properties(part_properties, part_schema):
