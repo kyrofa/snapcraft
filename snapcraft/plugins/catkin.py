@@ -34,8 +34,13 @@ Additionally, this plugin uses the following plugin-specific keywords:
     - include-roscore:
       (boolean)
       Whether or not to include roscore with the part. Defaults to true.
+    - underlay:
+      (string)
+      Path to existing workspace to underlay the one being built, for example
+      $SNAPCRAFT_STAGE/opt/ros/kinetic. Defaults to ''.
 """
 
+import contextlib
 import os
 import tempfile
 import logging
@@ -50,6 +55,7 @@ from snapcraft import (
     formatting_utils,
     repo,
 )
+from snapcraft.internal import errors
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +99,11 @@ class CatkinPlugin(snapcraft.BasePlugin):
             'default': 'true',
         }
 
+        schema['properties']['underlay'] = {
+            'type': 'string',
+            'default': '',
+        }
+
         schema['required'].append('catkin-packages')
 
         return schema
@@ -102,7 +113,7 @@ class CatkinPlugin(snapcraft.BasePlugin):
         # Inform Snapcraft of the properties associated with pulling. If these
         # change in the YAML Snapcraft will consider the pull step dirty.
         return ['rosdistro', 'catkin-packages', 'source-space',
-                'include-roscore']
+                'include-roscore', 'underlay']
 
     @property
     def PLUGIN_STAGE_SOURCES(self):
@@ -123,6 +134,7 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         # Get a unique set of packages
         self.catkin_packages = set(options.catkin_packages)
         self._rosdep_path = os.path.join(self.partdir, 'rosdep')
+        self._rospack_path = os.path.join(self.partdir, 'rospack')
 
         # The path created via the `source` key (or a combination of `source`
         # and `source-subdir` keys) needs to point to a valid Catkin workspace
@@ -152,6 +164,19 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
                     self.options.rosdistro,
                     formatting_utils.humanize_list(
                         _ROS_RELEASE_MAP.keys(), 'and')))
+
+        # Validate the underlay
+        underlay = self.options.underlay
+        if underlay:
+            if not os.path.isdir(underlay):
+                raise EnvironmentError(
+                    'Requested underlay ({!r}) does not point to a valid '
+                    'directory'.format(underlay))
+
+            if not os.path.isfile(os.path.join(underlay, 'setup.sh')):
+                raise EnvironmentError(
+                    'Requested underlay ({!r}) does not contain a '
+                    'setup.sh'.format(underlay))
 
     def env(self, root):
         """Runtime environment for ROS binaries and services."""
@@ -228,9 +253,17 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
                          self.project)
         rosdep.setup()
 
+        rospack = None
+        if self.options.underlay:
+            rospack = _Rospack(self.options.rosdistro, self.options.underlay,
+                               self._rospack_path, self.PLUGIN_STAGE_SOURCES,
+                               self.project)
+
+            rospack.setup()
+
         # Parse the Catkin packages to pull out their system dependencies
-        system_dependencies = _find_system_dependencies(self.catkin_packages,
-                                                        rosdep)
+        system_dependencies = _find_system_dependencies(
+            self.catkin_packages, rosdep, rospack)
 
         # If the package requires roscore, resolve it into a system dependency
         # as well.
@@ -268,8 +301,12 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         super().clean_pull()
 
         # Remove the rosdep path, if any
-        if os.path.exists(self._rosdep_path):
+        with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(self._rosdep_path)
+
+        # Remove the rospack path, if any
+        with contextlib.suppress(FileNotFoundError):
+            shutil.rmtree(self._rospack_path)
 
     @property
     def gcc_version(self):
@@ -283,6 +320,18 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
     def _run_in_bash(self, commandlist, cwd=None):
         with tempfile.NamedTemporaryFile(mode='w') as f:
             f.write('set -ex\n')
+
+            # If we're overlaying on another workspace (the underlay), we need
+            # to source the respective setup.sh's in order. If we're not
+            # overlaying, then the sourcing is already done by env().
+            underlay = self.options.underlay
+            if underlay:
+                f.write('_CATKIN_SETUP_DIR={} source {}\n'.format(
+                    underlay, os.path.join(underlay, 'setup.sh')))
+                rosdir = self.rosdir
+                f.write(
+                    '[ -f {1} ] && _CATKIN_SETUP_DIR={0} source {1} --extend\n'
+                    .format(rosdir, os.path.join(rosdir, 'setup.sh')))
             f.write('exec {}\n'.format(' '.join(commandlist)))
             f.flush()
 
@@ -415,7 +464,7 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         self._run_in_bash(catkincmd)
 
 
-def _find_system_dependencies(catkin_packages, rosdep):
+def _find_system_dependencies(catkin_packages, rosdep, rospack):
     """Find system dependencies for a given set of Catkin packages."""
 
     system_dependencies = {}
@@ -432,13 +481,31 @@ def _find_system_dependencies(catkin_packages, rosdep):
                     dependency in system_dependencies):
                 continue
 
+            if rospack:
+                # Before trying to resolve this dependency into a system
+                # dependency, see if it's already staged. This might happen in
+                # the case of dependent catkin parts, or if a tarball of a
+                # workspace was staged (e.g. for content sharing).
+                try:
+                    rospack.find_package(dependency)
+                except PackageNotFoundError:
+                    # No package by that name is available
+                    pass
+                else:
+                    # Package was found-- don't pull anything extra to satisfy
+                    # this dependency.
+                    logger.debug(
+                        'Satisfied dependency {!r} in underlay'.format(
+                            dependency))
+                    continue
+
             # In this situation, the package depends on something that we
             # weren't instructed to build. It's probably a system dependency,
             # but the developer could have also forgotten to tell us to build
             # it.
             try:
                 these_dependencies = rosdep.resolve_dependency(dependency)
-            except SystemDependencyNotFound:
+            except SystemDependencyNotFoundError:
                 raise RuntimeError(
                     "Package {!r} isn't a valid system dependency. "
                     "Did you forget to add it to catkin-packages? If "
@@ -453,8 +520,18 @@ def _find_system_dependencies(catkin_packages, rosdep):
                for item in sublist)
 
 
-class SystemDependencyNotFound(Exception):
-    pass
+class SystemDependencyNotFoundError(errors.SnapcraftError):
+    fmt = '{system_dependency!r} does not resolve to a system dependency'
+
+    def __init__(self, system_dependency):
+        super().__init__(system_dependency=system_dependency)
+
+
+class PackageNotFoundError(errors.SnapcraftError):
+    fmt = 'Unable to find Catkin package {package_name!r}'
+
+    def __init__(self, package_name):
+        super().__init__(package_name=package_name)
 
 
 class _Rosdep:
@@ -517,8 +594,7 @@ class _Rosdep:
             else:
                 return []
         except subprocess.CalledProcessError:
-            raise FileNotFoundError(
-                'Unable to find Catkin package "{}"'.format(package_name))
+            raise PackageNotFoundError(package_name)
 
     def resolve_dependency(self, dependency_name):
         try:
@@ -535,9 +611,7 @@ class _Rosdep:
                                 'ubuntu:{}'.format(
                                     _ROS_RELEASE_MAP[self._ros_distro])])
         except subprocess.CalledProcessError:
-            raise SystemDependencyNotFound(
-                '{!r} does not resolve to a system dependency'.format(
-                    dependency_name))
+            raise SystemDependencyNotFoundError(dependency_name)
 
         # Everything that isn't a package name is prepended with the pound
         # sign, so we'll ignore everything with that.
@@ -569,3 +643,82 @@ class _Rosdep:
 
         return subprocess.check_output(['rosdep'] + arguments,
                                        env=env).decode('utf8').strip()
+
+
+class _Rospack:
+    def __init__(self, ros_distro, workspace, rospack_path, ubuntu_sources,
+                 project):
+        self._ros_distro = ros_distro
+        self._workspace = workspace
+        self._ubuntu_sources = ubuntu_sources
+        self._rospack_path = rospack_path
+        self._project = project
+
+        self._rospack_install_path = os.path.join(
+            self._rospack_path, 'install')
+        self._rospack_cache_path = os.path.join(
+            self._rospack_path, 'cache')
+
+    def setup(self):
+        os.makedirs(self._rospack_install_path, exist_ok=True)
+
+        # rospack isn't necessarily a dependency of the project, and we don't
+        # want to bloat the .snap more than necessary. So we'll unpack it
+        # somewhere else, and use it from there.
+        logger.info('Preparing to fetch rospack...')
+        ubuntu = repo.Ubuntu(self._rospack_path, sources=self._ubuntu_sources,
+                             project_options=self._project)
+
+        logger.info('Fetching rospack...')
+        ubuntu.get(['ros-{}-rospack'.format(self._ros_distro)])
+
+        logger.info('Installing rospack...')
+        ubuntu.unpack(self._rospack_install_path)
+
+        # logger.info('Initializing rospack...')
+        # try:
+        #     self._run(['profile'])
+        # except subprocess.CalledProcessError as e:
+        #     output = e.output.decode('utf8').strip()
+        #     raise RuntimeError(
+        #         'Error initializing rospack:\n{}'.format(output))
+
+    def find_package(self, package_name):
+        try:
+            return self._run(['find', package_name]).strip()
+        except subprocess.CalledProcessError as e:
+            logger.warn('rospack: no package: {}'.format(e.output))
+            raise PackageNotFoundError(package_name)
+
+    def _run(self, arguments):
+        library_paths = common.get_library_paths(
+            self._rospack_install_path, self._project.arch_triplet)
+        library_paths.append(os.path.join(
+            self._rospack_install_path, 'opt', 'ros', self._ros_distro, 'lib'))
+
+        ros_path = os.path.join(
+            self._rospack_install_path, 'opt', 'ros', self._ros_distro)
+        with tempfile.NamedTemporaryFile(mode='w+') as f:
+            # We want to make sure we use our own rospack
+            f.write('export {}\n'.format(formatting_utils.format_path_variable(
+                'PATH',
+                (os.path.join(ros_path, 'bin'),
+                 os.path.join(self._rospack_install_path, 'usr', 'bin')),
+                prepend='', separator=':')))
+            f.write('export PYTHONPATH={}\n'.format(os.path.join(
+                self._rospack_install_path, 'usr', 'lib', 'python2.7',
+                'dist-packages')))
+            f.write('export {}\n'.format(formatting_utils.format_path_variable(
+                'LD_LIBRARY_PATH', library_paths, prepend='', separator=':')))
+            f.write('export _CATKIN_SETUP_DIR={}\n'.format(self._workspace))
+            f.write('source {}\n'.format(os.path.join(
+                self._workspace, 'setup.sh')))
+            # rospack maintains a cache of package directories in ROS_ROOT, so
+            # we'll set that here.
+            f.write('export ROS_ROOT={}\n'.format(self._rospack_cache_path))
+            f.write('\n')
+            f.write('exec "$@"')
+            f.flush()
+            return subprocess.check_output(
+                ['/bin/bash', f.name, 'rospack'] + arguments,
+                stderr=subprocess.STDOUT).decode('utf8').strip()
