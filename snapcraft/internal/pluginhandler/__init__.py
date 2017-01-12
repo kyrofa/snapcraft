@@ -1078,6 +1078,9 @@ def check_for_collisions(parts):
                     f)
                 if os.path.islink(this) and os.path.islink(other):
                     continue
+                elif os.path.islink(this) != os.path.islink(other):
+                    conflict_files.append(f)
+                    continue
                 if _file_collides(this, other):
                     conflict_files.append(f)
 

@@ -41,6 +41,7 @@ Additionally, this plugin uses the following plugin-specific keywords:
 """
 
 import contextlib
+import glob
 import os
 import tempfile
 import logging
@@ -127,14 +128,15 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
 
     def __init__(self, name, options, project):
         super().__init__(name, options, project)
-        self.build_packages.extend(['gcc', 'libc6-dev', 'make'])
-
-        self.stage_packages.extend(['gcc', 'g++'])
+        self.build_packages.extend(['make', 'libc6-dev'])
+        self.stage_packages.append(
+            'ros-{}-roslib'.format(self.options.rosdistro))
 
         # Get a unique set of packages
         self.catkin_packages = set(options.catkin_packages)
         self._rosdep_path = os.path.join(self.partdir, 'rosdep')
         self._rospack_path = os.path.join(self.partdir, 'rospack')
+        self._compilers_path = os.path.join(self.partdir, 'compilers')
 
         # The path created via the `source` key (or a combination of `source`
         # and `source-subdir` keys) needs to point to a valid Catkin workspace
@@ -164,19 +166,6 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
                     self.options.rosdistro,
                     formatting_utils.humanize_list(
                         _ROS_RELEASE_MAP.keys(), 'and')))
-
-        # Validate the underlay
-        underlay = self.options.underlay
-        if underlay:
-            if not os.path.isdir(underlay):
-                raise EnvironmentError(
-                    'Requested underlay ({!r}) does not point to a valid '
-                    'directory'.format(underlay))
-
-            if not os.path.isfile(os.path.join(underlay, 'setup.sh')):
-                raise EnvironmentError(
-                    'Requested underlay ({!r}) does not contain a '
-                    'setup.sh'.format(underlay))
 
     def env(self, root):
         """Runtime environment for ROS binaries and services."""
@@ -247,6 +236,25 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
                 'Unable to find package path: "{}"'.format(
                     self._ros_package_path))
 
+        # Validate the underlay. Note that this validation can't happen in
+        # __init__ as the underlay will probably only be valid once a
+        # dependency has been staged.
+        underlay = self.options.underlay
+        if underlay:
+            if not os.path.isdir(underlay):
+                raise EnvironmentError(
+                    'Requested underlay ({!r}) does not point to a valid '
+                    'directory'.format(underlay))
+
+            if not os.path.isfile(os.path.join(underlay, 'setup.sh')):
+                raise EnvironmentError(
+                    'Requested underlay ({!r}) does not contain a '
+                    'setup.sh'.format(underlay))
+
+        compilers = _Compilers(
+            self._compilers_path, self.PLUGIN_STAGE_SOURCES, self.project)
+        compilers.setup()
+
         # Use rosdep for dependency detection and resolution
         rosdep = _Rosdep(self.options.rosdistro, self._ros_package_path,
                          self._rosdep_path, self.PLUGIN_STAGE_SOURCES,
@@ -308,9 +316,9 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(self._rospack_path)
 
-    @property
-    def gcc_version(self):
-        return self.run_output(['gcc', '-dumpversion'])
+        # Remove the compilers path, if any
+        with contextlib.suppress(FileNotFoundError):
+            shutil.rmtree(self._compilers_path)
 
     @property
     def rosdir(self):
@@ -319,7 +327,7 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
 
     def _run_in_bash(self, commandlist, cwd=None):
         with tempfile.NamedTemporaryFile(mode='w') as f:
-            f.write('set -ex\n')
+            f.write('set -e\n')
 
             # If we're overlaying on another workspace (the underlay), we need
             # to source the respective setup.sh's in order. If we're not
@@ -365,32 +373,57 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         # dependencies contain .cmake files pointing to system paths (e.g.
         # /usr/lib, /usr/include, etc.). They need to be rewritten to point to
         # the install directory.
-        def rewrite_paths(match):
+        def _new_path(path):
+            if not path.startswith(self.installdir):
+                return self.installdir + path
+            return path
+
+        self._rewrite_cmake_paths(_new_path)
+
+    def _rewrite_cmake_paths(self, new_path_callable):
+        def _rewrite_paths(match):
             paths = match.group(1).strip().split(';')
             for i, path in enumerate(paths):
-                # Rewrite this path if it's an absolute path and not already
-                # within the install directory.
-                if (os.path.isabs(path) and
-                        not path.startswith(self.installdir)):
-                    paths[i] = self.installdir + path
+                # Offer the opportunity to rewrite this path if it's absolute.
+                if os.path.isabs(path):
+                    paths[i] = new_path_callable(path)
 
             return '"' + ';'.join(paths) + '"'
 
         # Looking for any path-like string
         file_utils.replace_in_file(self.rosdir, re.compile(r'.*Config.cmake$'),
                                    re.compile(r'"(.*?/.*?)"'),
-                                   rewrite_paths)
+                                   _rewrite_paths)
 
     def _finish_build(self):
         self._use_in_snap_python()
+
+        # We've finished the build, but we need to make sure we turn the cmake
+        # files back into something that doesn't include our installdir.
+        pattern = re.compile(r'^{}'.format(self.installdir))
+
+        def _new_path(path):
+            return pattern.sub('$ENV{SNAPCRAFT_STAGE}', path)
+        self._rewrite_cmake_paths(_new_path)
 
         # Replace the CMAKE_PREFIX_PATH in _setup_util.sh
         setup_util_file = os.path.join(self.rosdir, '_setup_util.py')
         if os.path.isfile(setup_util_file):
             with open(setup_util_file, 'r+') as f:
-                pattern = re.compile(r"CMAKE_PREFIX_PATH = '{}.*".format(
-                    self.rosdir))
+                pattern = re.compile(r"CMAKE_PREFIX_PATH = '.*/opt/ros.*")
                 replaced = pattern.sub('CMAKE_PREFIX_PATH = []', f.read())
+                f.seek(0)
+                f.truncate()
+                f.write(replaced)
+
+        # Set the _CATKIN_SETUP_DIR in setup.sh to a sensible default.
+        setup_sh_file = os.path.join(self.rosdir, 'setup.sh')
+        if os.path.isfile(setup_sh_file):
+            with open(setup_sh_file, 'r+') as f:
+                pattern = re.compile(r"\${_CATKIN_SETUP_DIR:=.*}")
+                replaced = pattern.sub(
+                    '${{_CATKIN_SETUP_DIR:=$SNAP/opt/ros/{}}}'.format(
+                        self.options.rosdistro), f.read())
                 f.seek(0)
                 f.truncate()
                 f.write(replaced)
@@ -441,20 +474,17 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         # All the arguments that follow are meant for CMake
         catkincmd.append('--cmake-args')
 
-        # Make sure we're using the compilers included in this .snap
+        compilers = _Compilers(
+            self._compilers_path, self.PLUGIN_STAGE_SOURCES, self.project)
+
+        # Make sure we're using our own compilers (the one on the system may
+        # be the wrong version).
         catkincmd.extend([
-            '-DCMAKE_C_FLAGS="$CFLAGS"',
-            '-DCMAKE_CXX_FLAGS="$CPPFLAGS -I{} -I{}"'.format(
-                os.path.join(self.installdir, 'usr', 'include', 'c++',
-                             self.gcc_version),
-                os.path.join(self.installdir, 'usr', 'include',
-                             self.project.arch_triplet, 'c++',
-                             self.gcc_version)),
-            '-DCMAKE_LD_FLAGS="$LDFLAGS"',
-            '-DCMAKE_C_COMPILER={}'.format(
-                os.path.join(self.installdir, 'usr', 'bin', 'gcc')),
-            '-DCMAKE_CXX_COMPILER={}'.format(
-                os.path.join(self.installdir, 'usr', 'bin', 'g++'))
+            '-DCMAKE_C_FLAGS="$CFLAGS {}"'.format(compilers.cflags),
+            '-DCMAKE_CXX_FLAGS="$CPPFLAGS {}"'.format(compilers.cxxflags),
+            '-DCMAKE_LD_FLAGS="$LDFLAGS {}"'.format(compilers.ldflags),
+            '-DCMAKE_C_COMPILER={}'.format(compilers.c_compiler_path),
+            '-DCMAKE_CXX_COMPILER={}'.format(compilers.cxx_compiler_path)
         ])
 
         # This command must run in bash due to a bug in Catkin that causes it
@@ -686,8 +716,7 @@ class _Rospack:
     def find_package(self, package_name):
         try:
             return self._run(['find', package_name]).strip()
-        except subprocess.CalledProcessError as e:
-            logger.warn('rospack: no package: {}'.format(e.output))
+        except subprocess.CalledProcessError:
             raise PackageNotFoundError(package_name)
 
     def _run(self, arguments):
@@ -722,3 +751,71 @@ class _Rospack:
             return subprocess.check_output(
                 ['/bin/bash', f.name, 'rospack'] + arguments,
                 stderr=subprocess.STDOUT).decode('utf8').strip()
+
+
+class _Compilers:
+    def __init__(self, compilers_path, ubuntu_sources, project):
+        self._compilers_path = compilers_path
+        self._ubuntu_sources = ubuntu_sources
+        self._project = project
+
+        self._compilers_install_path = os.path.join(
+            self._compilers_path, 'install')
+        self.__gcc_version = None
+
+    def setup(self):
+        os.makedirs(self._compilers_install_path, exist_ok=True)
+
+        # Since we support building older ROS distros we need to make sure we
+        # use the corresponding compiler versions, so they can't be
+        # build-packages. We'll just download them to another place and use
+        # them from there.
+        logger.info('Preparing to fetch compilers...')
+        ubuntu = repo.Ubuntu(
+            self._compilers_path, sources=self._ubuntu_sources,
+            project_options=self._project)
+
+        logger.info('Fetching compilers...')
+        ubuntu.get(['gcc', 'g++'])
+
+        logger.info('Installing compilers...')
+        ubuntu.unpack(self._compilers_install_path)
+
+    @property
+    def c_compiler_path(self):
+        return os.path.join(self._compilers_install_path, 'usr', 'bin', 'gcc')
+
+    @property
+    def cxx_compiler_path(self):
+        return os.path.join(self._compilers_install_path, 'usr', 'bin', 'g++')
+
+    @property
+    def cflags(self):
+        return ''
+
+    @property
+    def _gcc_version(self):
+        if not self.__gcc_version:
+            # Determine the gcc version
+            versions = sorted(glob.glob(os.path.join(
+                self._compilers_install_path, 'usr', 'include', 'c++', '*')))
+            if not versions:
+                raise RuntimeError('Unable to determine gcc version')
+
+            self.__gcc_version = versions[-1]
+
+        return self.__gcc_version
+
+    @property
+    def cxxflags(self):
+
+        return '-I{} -I{}'.format(
+            os.path.join(self._compilers_install_path, 'usr', 'include', 'c++',
+                         self._gcc_version),
+            os.path.join(self._compilers_install_path, 'usr', 'include',
+                         self._project.arch_triplet, 'c++',
+                         self._gcc_version))
+
+    @property
+    def ldflags(self):
+        return ''

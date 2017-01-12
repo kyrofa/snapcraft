@@ -89,7 +89,8 @@ def get_dependencies(elf):
     logger.debug('Getting dependencies for {!r}'.format(elf))
     ldd_out = ''
     try:
-        ldd_out = common.run_output(['ldd', elf]).split('\n')
+        ldd_out = common.run_output(
+            ['ldd', elf], stderr=subprocess.DEVNULL).split('\n')
     except subprocess.CalledProcessError:
         logger.warning(
             'Unable to determine library dependencies for {!r}'.format(elf))

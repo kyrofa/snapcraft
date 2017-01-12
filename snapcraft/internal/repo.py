@@ -459,7 +459,8 @@ def _fix_xml_tools(root):
 def _fix_symlink(path, debdir, root):
     target = os.path.join(debdir, os.readlink(path)[1:])
     if _skip_link(os.readlink(path)):
-        logger.debug('Skipping {}'.format(target))
+        logger.debug('Removing {}'.format(target))
+        os.remove(path)
         return
     if not os.path.exists(target) and not _try_copy_local(path, target):
         return

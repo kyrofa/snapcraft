@@ -354,6 +354,6 @@ def _find_bin(binary, basedir):
         tempf.flush()
         try:
             common.run(['/bin/sh', tempf.name], cwd=basedir,
-                       stdout=subprocess.DEVNULL)
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except subprocess.CalledProcessError:
             raise CommandError(binary)

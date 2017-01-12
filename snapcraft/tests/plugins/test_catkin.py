@@ -332,7 +332,8 @@ class CatkinPluginTestCase(tests.TestCase):
         self.assertTrue(mock.call().unpack(plugin.installdir) not in
                         self.ubuntu_mock.mock_calls)
 
-    def test_pull_invalid_dependency(self):
+    @mock.patch('snapcraft.plugins.catkin._Compilers')
+    def test_pull_invalid_dependency(self, compilers_mock):
         plugin = catkin.CatkinPlugin('test-part', self.properties,
                                      self.project_options)
         os.makedirs(os.path.join(plugin.sourcedir, 'src'))
@@ -474,13 +475,14 @@ class CatkinPluginTestCase(tests.TestCase):
                          'source-space cannot be the root of the Catkin '
                          'workspace')
 
+    @mock.patch('snapcraft.plugins.catkin._Compilers')
     @mock.patch.object(catkin.CatkinPlugin, 'run')
     @mock.patch.object(catkin.CatkinPlugin, '_run_in_bash')
     @mock.patch.object(catkin.CatkinPlugin, 'run_output', return_value='foo')
     @mock.patch.object(catkin.CatkinPlugin, '_prepare_build')
     @mock.patch.object(catkin.CatkinPlugin, '_finish_build')
     def test_build(self, finish_build_mock, prepare_build_mock,
-                   run_output_mock, bashrun_mock, run_mock):
+                   run_output_mock, bashrun_mock, run_mock, compilers_mock):
         plugin = catkin.CatkinPlugin('test-part', self.properties,
                                      self.project_options)
         os.makedirs(os.path.join(plugin.sourcedir, 'src'))
@@ -512,13 +514,15 @@ class CatkinPluginTestCase(tests.TestCase):
 
         finish_build_mock.assert_called_once_with()
 
+    @mock.patch('snapcraft.plugins.catkin._Compilers')
     @mock.patch.object(catkin.CatkinPlugin, 'run')
     @mock.patch.object(catkin.CatkinPlugin, '_run_in_bash')
     @mock.patch.object(catkin.CatkinPlugin, 'run_output', return_value='foo')
     @mock.patch.object(catkin.CatkinPlugin, '_prepare_build')
     @mock.patch.object(catkin.CatkinPlugin, '_finish_build')
     def test_build_multiple(self, finish_build_mock, prepare_build_mock,
-                            run_output_mock, bashrun_mock, run_mock):
+                            run_output_mock, bashrun_mock, run_mock,
+                            compilers_mock):
         self.properties.catkin_packages.append('package_2')
 
         plugin = catkin.CatkinPlugin('test-part', self.properties,
@@ -546,9 +550,11 @@ class CatkinPluginTestCase(tests.TestCase):
 
         finish_build_mock.assert_called_once_with()
 
+    @mock.patch('snapcraft.plugins.catkin._Compilers')
     @mock.patch.object(catkin.CatkinPlugin, 'run')
     @mock.patch.object(catkin.CatkinPlugin, 'run_output', return_value='foo')
-    def test_build_runs_in_bash(self, run_output_mock, run_mock):
+    def test_build_runs_in_bash(self, run_output_mock, run_mock,
+                                compilers_mock):
         plugin = catkin.CatkinPlugin('test-part', self.properties,
                                      self.project_options)
         os.makedirs(os.path.join(plugin.sourcedir, 'src'))
@@ -684,7 +690,58 @@ class CatkinPluginTestCase(tests.TestCase):
         for file_info in files:
             path = os.path.join(plugin.rosdir, file_info['path'])
             with open(path, 'r') as f:
-                self.assertEqual(f.read(), file_info['expected'])
+                self.assertThat(f.read(), Equals(file_info['expected']))
+
+    @mock.patch.object(catkin.CatkinPlugin, '_use_in_snap_python')
+    def test_finish_build_cmake_paths(self, use_in_snap_python_mock):
+        plugin = catkin.CatkinPlugin('test-part', self.properties,
+                                     self.project_options)
+        os.makedirs(os.path.join(plugin.rosdir, 'test'))
+
+        # Place a few .cmake files with incorrect paths, and some files that
+        # shouldn't be changed.
+        files = [
+            {
+                'path': 'fooConfig.cmake',
+                'contents': '"{}/usr/lib/foo"'.format(plugin.installdir),
+                'expected': '"$ENV{SNAP}/usr/lib/foo"',
+            },
+            {
+                'path': 'bar.cmake',
+                'contents': '"/usr/lib/bar"',
+                'expected': '"/usr/lib/bar"',
+            },
+            {
+                'path': 'test/bazConfig.cmake',
+                'contents': '"{0}/test/baz;{0}/usr/lib/baz"'.format(
+                    plugin.installdir),
+                'expected': '"$ENV{SNAP}/test/baz;$ENV{SNAP}/usr/lib/baz"',
+            },
+            {
+                'path': 'test/quxConfig.cmake',
+                'contents': 'qux',
+                'expected': 'qux',
+            },
+            {
+                'path': 'test/installedConfig.cmake',
+                'contents': '"$ENV{SNAP}/foo"',
+                'expected': '"$ENV{SNAP}/foo"',
+            }
+        ]
+
+        for file_info in files:
+            path = os.path.join(plugin.rosdir, file_info['path'])
+            with open(path, 'w') as f:
+                f.write(file_info['contents'])
+
+        plugin._finish_build()
+
+        self.assertTrue(use_in_snap_python_mock.called)
+
+        for file_info in files:
+            path = os.path.join(plugin.rosdir, file_info['path'])
+            with open(path, 'r') as f:
+                self.assertThat(f.read(), Equals(file_info['expected']))
 
     @mock.patch.object(catkin.CatkinPlugin, 'run')
     @mock.patch.object(catkin.CatkinPlugin, 'run_output', return_value='foo')
@@ -1032,30 +1089,19 @@ class RospackTestCase(tests.TestCase):
         self.rospack.setup()
 
         # Make sure running setup() again doesn't have problems with the old
-        # environment
-        # An exception will be raised if setup can't be called twice.
+        # environment. An exception will be raised if setup() can't be called
+        # twice.
         self.rospack.setup()
-    #
-    # def test_setup_initialization_failure(self):
-    #     def run(args, **kwargs):
-    #         if args == ['rosdep', 'init']:
-    #             raise subprocess.CalledProcessError(1, 'foo', b'bar')
-    #
-    #     self.check_output_mock.side_effect = run
-    #
-    #     raised = self.assertRaises(RuntimeError, self.rosdep.setup)
-    #
-    #     self.assertEqual(str(raised),
-    #                      'Error initializing rosdep database:\nbar')
-    #
 
     def test_find_package(self):
         self.check_output_mock.return_value = b'bar'
 
         self.assertThat(self.rospack.find_package('foo'), Equals('bar'))
 
-        self.check_output_mock.assert_called_with(
-            ['rospack', 'find', 'foo'], env=mock.ANY, stderr=subprocess.STDOUT)
+        self.assertTrue(self.check_output_mock.called)
+        positional_args = self.check_output_mock.call_args[0][0]
+        self.assertThat(
+            ' '.join(positional_args), Contains('rospack find foo'))
 
     def test_find_non_existing_package(self):
         self.check_output_mock.side_effect = subprocess.CalledProcessError(
@@ -1066,9 +1112,10 @@ class RospackTestCase(tests.TestCase):
                 "Unable to find Catkin package 'foo'"):
             self.rospack.find_package('foo')
 
-        self.check_output_mock.assert_called_with(
-            ['bin/bash', mock.ANY, 'rospack', 'find', 'foo'],
-            stderr=subprocess.STDOUT)
+        self.assertTrue(self.check_output_mock.called)
+        positional_args = self.check_output_mock.call_args[0][0]
+        self.assertThat(
+            ' '.join(positional_args), Contains('rospack find foo'))
 
     # def test_run(self):
     #     self.rospack._run(['qux'])
