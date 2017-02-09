@@ -34,6 +34,10 @@ Additionally, this plugin uses the following plugin-specific keywords:
     - include-roscore:
       (boolean)
       Whether or not to include roscore with the part. Defaults to true.
+    - underlay:
+      (string)
+      Path to existing workspace to underlay the one being built, for example
+      $SNAPCRAFT_STAGE/opt/ros/kinetic. Defaults to ''.
 """
 
 import contextlib
@@ -53,6 +57,7 @@ from snapcraft import (
     formatting_utils,
     repo,
 )
+from snapcraft.internal import errors
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +101,11 @@ class CatkinPlugin(snapcraft.BasePlugin):
             'default': 'true',
         }
 
+        schema['properties']['underlay'] = {
+            'type': 'string',
+            'default': '',
+        }
+
         schema['required'].append('catkin-packages')
 
         return schema
@@ -105,7 +115,7 @@ class CatkinPlugin(snapcraft.BasePlugin):
         # Inform Snapcraft of the properties associated with pulling. If these
         # change in the YAML Snapcraft will consider the pull step dirty.
         return ['rosdistro', 'catkin-packages', 'source-space',
-                'include-roscore']
+                'include-roscore', 'underlay']
 
     @property
     def PLUGIN_STAGE_SOURCES(self):
@@ -121,10 +131,16 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         super().__init__(name, options, project)
         self.build_packages.extend(['libc6-dev', 'make'])
 
+        # roslib is the base requiremet to actually create a workspace with
+        # setup.sh and the necessary hooks.
+        self.stage_packages.append(
+            'ros-{}-roslib'.format(self.options.rosdistro))
+
         # Get a unique set of packages
         self.catkin_packages = set(options.catkin_packages)
         self._rosdep_path = os.path.join(self.partdir, 'rosdep')
         self._compilers_path = os.path.join(self.partdir, 'compilers')
+        self._catkin_path = os.path.join(self.partdir, 'catkin')
 
         # The path created via the `source` key (or a combination of `source`
         # and `source-subdir` keys) needs to point to a valid Catkin workspace
@@ -248,6 +264,28 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
                 'Unable to find package path: "{}"'.format(
                     self._ros_package_path))
 
+        # Validate the underlay. Note that this validation can't happen in
+        # __init__ as the underlay will probably only be valid once a
+        # dependency has been staged.
+        catkin = None
+        underlay = self.options.underlay
+        if underlay:
+            if not os.path.isdir(underlay):
+                raise EnvironmentError(
+                    'Requested underlay ({!r}) does not point to a valid '
+                    'directory'.format(underlay))
+
+            if not os.path.isfile(os.path.join(underlay, 'setup.sh')):
+                raise EnvironmentError(
+                    'Requested underlay ({!r}) does not contain a '
+                    'setup.sh'.format(underlay))
+
+            # Use catkin_find to discover dependencies already in the underlay
+            catkin = _Catkin(
+                self.options.rosdistro, underlay, self._catkin_path,
+                self.PLUGIN_STAGE_SOURCES, self.project)
+            catkin.setup()
+
         # Pull our own compilers so we use ones that match up with the version
         # of ROS we're using.
         compilers = _Compilers(
@@ -261,8 +299,8 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         rosdep.setup()
 
         # Parse the Catkin packages to pull out their system dependencies
-        system_dependencies = _find_system_dependencies(self.catkin_packages,
-                                                        rosdep)
+        system_dependencies = _find_system_dependencies(
+            self.catkin_packages, rosdep, catkin)
 
         # If the package requires roscore, resolve it into a system dependency
         # as well.
@@ -307,6 +345,10 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(self._compilers_path)
 
+        # Remove the catkin path, if any
+        with contextlib.suppress(FileNotFoundError):
+            shutil.rmtree(self._catkin_path)
+
     @property
     def rosdir(self):
         return os.path.join(self.installdir, 'opt', 'ros',
@@ -314,7 +356,20 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
 
     def _run_in_bash(self, commandlist, cwd=None, env=None):
         with tempfile.NamedTemporaryFile(mode='w') as f:
-            f.write('set -ex\n')
+            f.write('set -e\n')
+
+            # If we're overlaying on another workspace (the underlay), we need
+            # to source the respective setup.sh's in order. If we're not
+            # overlaying, then the sourcing is already done by env().
+            underlay = self.options.underlay
+            if underlay:
+                f.write('_CATKIN_SETUP_DIR={} source {}\n'.format(
+                    underlay, os.path.join(underlay, 'setup.sh')))
+                rosdir = self.rosdir
+                f.write(
+                    '[ -f {1} ] && _CATKIN_SETUP_DIR={0} source {1} --extend\n'
+                    .format(rosdir, os.path.join(rosdir, 'setup.sh')))
+
             f.write('exec {}\n'.format(' '.join(commandlist)))
             f.flush()
 
@@ -472,7 +527,7 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         self._run_in_bash(catkincmd, env=compilers.environment)
 
 
-def _find_system_dependencies(catkin_packages, rosdep):
+def _find_system_dependencies(catkin_packages, rosdep, catkin):
     """Find system dependencies for a given set of Catkin packages."""
 
     system_dependencies = {}
@@ -489,13 +544,29 @@ def _find_system_dependencies(catkin_packages, rosdep):
                     dependency in system_dependencies):
                 continue
 
+            if catkin:
+                # Before trying to resolve this dependency into a system
+                # dependency, see if it's already in the underlay.
+                try:
+                    catkin.find(dependency)
+                except CatkinPackageNotFoundError:
+                    # No package by that name is available
+                    pass
+                else:
+                    # Package was found-- don't pull anything extra to satisfy
+                    # this dependency.
+                    logger.debug(
+                        'Satisfied dependency {!r} in underlay'.format(
+                            dependency))
+                    continue
+
             # In this situation, the package depends on something that we
             # weren't instructed to build. It's probably a system dependency,
             # but the developer could have also forgotten to tell us to build
             # it.
             try:
                 these_dependencies = rosdep.resolve_dependency(dependency)
-            except SystemDependencyNotFound:
+            except SystemDependencyNotFoundError:
                 raise RuntimeError(
                     "Package {!r} isn't a valid system dependency. "
                     "Did you forget to add it to catkin-packages? If "
@@ -510,8 +581,18 @@ def _find_system_dependencies(catkin_packages, rosdep):
                for item in sublist)
 
 
-class SystemDependencyNotFound(Exception):
-    pass
+class SystemDependencyNotFoundError(errors.SnapcraftError):
+    fmt = '{system_dependency!r} does not resolve to a system dependency'
+
+    def __init__(self, system_dependency):
+        super().__init__(system_dependency=system_dependency)
+
+
+class CatkinPackageNotFoundError(errors.SnapcraftError):
+    fmt = 'Unable to find Catkin package {package_name!r}'
+
+    def __init__(self, package_name):
+        super().__init__(package_name=package_name)
 
 
 class _Rosdep:
@@ -592,9 +673,7 @@ class _Rosdep:
                                 'ubuntu:{}'.format(
                                     _ROS_RELEASE_MAP[self._ros_distro])])
         except subprocess.CalledProcessError:
-            raise SystemDependencyNotFound(
-                '{!r} does not resolve to a system dependency'.format(
-                    dependency_name))
+            raise SystemDependencyNotFoundError(dependency_name)
 
         # Everything that isn't a package name is prepended with the pound
         # sign, so we'll ignore everything with that.
@@ -709,6 +788,62 @@ class _Compilers:
             self._compilers_install_path, self._project.arch_triplet)
         return formatting_utils.combine_paths(
             paths, prepend='-L', separator=' ')
+
+
+class _Catkin:
+    def __init__(self, ros_distro, workspace, catkin_path, ubuntu_sources,
+                 project):
+        self._ros_distro = ros_distro
+        self._workspace = workspace
+        self._catkin_path = catkin_path
+        self._ubuntu_sources = ubuntu_sources
+        self._project = project
+        self._catkin_install_path = os.path.join(self._catkin_path, 'install')
+
+    def setup(self):
+        os.makedirs(self._catkin_install_path, exist_ok=True)
+
+        # With the introduction of an underlay, we no longer know where Catkin
+        # is. Let's just fetch/unpack our own, and use it.
+        logger.info('Preparing to fetch catkin...')
+        ubuntu = repo.Ubuntu(self._catkin_path, sources=self._ubuntu_sources,
+                             project_options=self._project)
+        logger.info('Fetching catkin...')
+        ubuntu.get(['ros-{}-catkin'.format(self._ros_distro)])
+
+        logger.info('Installing catkin...')
+        ubuntu.unpack(self._catkin_install_path)
+
+    def find(self, package_name):
+        try:
+            return self._run(['--first-only', package_name]).strip()
+        except subprocess.CalledProcessError:
+            raise CatkinPackageNotFoundError(package_name)
+
+    def _run(self, arguments):
+        with tempfile.NamedTemporaryFile(mode='w+') as f:
+            lines = ['export PYTHONPATH={}'.format(os.path.join(
+                self._catkin_install_path, 'usr', 'lib', 'python2.7',
+                'dist-packages'))]
+
+            ros_path = os.path.join(
+                self._catkin_install_path, 'opt', 'ros', self._ros_distro)
+            bin_paths = (
+                os.path.join(ros_path, 'bin'),
+                os.path.join(self._catkin_install_path, 'usr', 'bin'))
+            lines.append('export {}'.format(
+                formatting_utils.format_path_variable(
+                    'PATH', bin_paths, prepend='', separator=':')))
+
+            lines.append('export _CATKIN_SETUP_DIR={}'.format(self._workspace))
+            lines.append('source {}'.format(os.path.join(
+                self._workspace, 'setup.sh')))
+            lines.append('exec "$@"')
+            f.write('\n'.join(lines))
+            f.flush()
+            return subprocess.check_output(
+                ['/bin/bash', f.name, 'catkin_find'] + arguments,
+                stderr=subprocess.STDOUT).decode('utf8').strip()
 
 
 def _get_highest_version_path(path):
