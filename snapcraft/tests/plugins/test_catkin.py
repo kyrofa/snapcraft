@@ -66,7 +66,7 @@ class CatkinPluginTestCase(tests.TestCase):
             source_space = 'src'
             source_subdir = None
             include_roscore = False
-            underlay = ''
+            underlay = None
 
         self.properties = props()
         self.project_options = snapcraft.ProjectOptions()
@@ -210,25 +210,38 @@ class CatkinPluginTestCase(tests.TestCase):
                          'but it was "{}"'.format(include_roscore_default))
 
         # Check underlay property
-        self.assertTrue('underlay' in properties,
+        self.assertThat(properties, Contains('underlay'),
                         'Expected "underlay" to be included in properties')
 
         underlay = properties['underlay']
-        self.assertTrue('type' in underlay,
+        self.assertThat(underlay, Contains('type'),
                         'Expected "type" to be included in "underlay"')
-        self.assertTrue('default' in underlay,
-                        'Expected "default" to be included in '
-                        '"underlay"')
+        self.assertThat(underlay, Contains('properties'),
+                        'Expected "properties" to be included in "underlay"')
+        self.assertThat(underlay, Contains('required'),
+                        'Expected "required" to be included in "underlay"')
 
         underlay_type = underlay['type']
-        self.assertEqual(underlay_type, 'string',
-                         'Expected "underlay" "type" to be "string", but it '
-                         'was "{}"'.format(underlay_type))
+        self.assertThat(underlay_type, Equals('object'),
+                        'Expected "underlay" "type" to be "object", but it '
+                        'was "{}"'.format(underlay_type))
 
-        underlay_default = underlay['default']
-        self.assertEqual(underlay_default, '',
-                         'Expected "underlay" "default" to be "", but it was '
-                         '"{}"'.format(underlay_default))
+        underlay_required = underlay['required']
+        self.assertThat(underlay_required, HasLength(2))
+        self.assertThat(underlay_required, Contains('build-path'))
+        self.assertThat(underlay_required, Contains('run-path'))
+
+        underlay_properties = underlay['properties']
+        self.assertThat(underlay_properties, Contains('build-path'))
+        self.assertThat(underlay_properties, Contains('run-path'))
+
+        underlay_build_path = underlay_properties['build-path']
+        self.assertThat(underlay_build_path, Contains('type'))
+        self.assertThat(underlay_build_path['type'], Equals('string'))
+
+        underlay_run_path = underlay_properties['run-path']
+        self.assertThat(underlay_run_path, Contains('type'))
+        self.assertThat(underlay_run_path['type'], Equals('string'))
 
         # Check required
         self.assertTrue('catkin-packages' in schema['required'],
@@ -604,58 +617,6 @@ class CatkinPluginTestCase(tests.TestCase):
                                    file_info['path']), 'r') as f:
                 self.assertThat(f.read(), Equals(file_info['expected']))
 
-    @mock.patch.object(catkin.CatkinPlugin, '_use_in_snap_python')
-    def test_finish_build_cmake_paths(self, use_in_snap_python_mock):
-        plugin = catkin.CatkinPlugin('test-part', self.properties,
-                                     self.project_options)
-        os.makedirs(os.path.join(plugin.rosdir, 'test'))
-
-        # Place a few .cmake files with incorrect paths, and some files that
-        # shouldn't be changed.
-        files = [
-            {
-                'path': 'fooConfig.cmake',
-                'contents': '"{}/usr/lib/foo"'.format(plugin.installdir),
-                'expected': '"$ENV{SNAPCRAFT_STAGE}/usr/lib/foo"',
-            },
-            {
-                'path': 'bar.cmake',
-                'contents': '"/usr/lib/bar"',
-                'expected': '"/usr/lib/bar"',
-            },
-            {
-                'path': 'test/bazConfig.cmake',
-                'contents': '"{0}/test/baz;{0}/usr/lib/baz"'.format(
-                    plugin.installdir),
-                'expected': '"$ENV{SNAPCRAFT_STAGE}/test/baz;'
-                            '$ENV{SNAPCRAFT_STAGE}/usr/lib/baz"',
-            },
-            {
-                'path': 'test/quxConfig.cmake',
-                'contents': 'qux',
-                'expected': 'qux',
-            },
-            {
-                'path': 'test/installedConfig.cmake',
-                'contents': '"$ENV{SNAPCRAFT_STAGE}/foo"',
-                'expected': '"$ENV{SNAPCRAFT_STAGE}/foo"',
-            }
-        ]
-
-        for file_info in files:
-            path = os.path.join(plugin.rosdir, file_info['path'])
-            with open(path, 'w') as f:
-                f.write(file_info['contents'])
-
-        plugin._finish_build()
-
-        self.assertTrue(use_in_snap_python_mock.called)
-
-        for file_info in files:
-            path = os.path.join(plugin.rosdir, file_info['path'])
-            with open(path, 'r') as f:
-                self.assertThat(f.read(), Equals(file_info['expected']))
-
     @mock.patch.object(catkin.CatkinPlugin, 'run')
     @mock.patch.object(catkin.CatkinPlugin, 'run_output', return_value='foo')
     def test_use_in_snap_python_skips_binarys(self, run_output_mock, run_mock):
@@ -696,8 +657,134 @@ class CatkinPluginTestCase(tests.TestCase):
                              'The absolute path to python was not replaced as '
                              'expected')
 
+    @mock.patch.object(catkin.CatkinPlugin, 'run_output', return_value='bar')
+    def test_run_environment(self, run_mock):
+        plugin = catkin.CatkinPlugin('test-part', self.properties,
+                                     self.project_options)
+
+        python_path = os.path.join(
+            plugin.installdir, 'usr', 'lib', 'python2.7', 'dist-packages')
+        os.makedirs(python_path)
+
+        # Joining and re-splitting to get hacked script in there as well
+        environment = '\n'.join(plugin.env(plugin.installdir)).split('\n')
+
+        self.assertThat(environment, Contains(
+            'PYTHONPATH={}:$PYTHONPATH'.format(python_path)))
+
+        self.assertThat(environment, Contains(
+            'ROS_MASTER_URI=http://localhost:11311'))
+
+        self.assertThat(environment, Contains('ROS_HOME=$SNAP_USER_DATA/ros'))
+
+        self.assertThat(environment, Contains('LC_ALL=C.UTF-8'))
+
+        self.assertThat(environment, Contains('. {}'.format(
+            os.path.join(plugin.rosdir, 'snapcraft-setup.sh'))))
+
+    def test_generate_snapcraft_sh(self):
+        plugin = catkin.CatkinPlugin('test-part', self.properties,
+                                     self.project_options)
+
+        # Make sure $@ is zeroed, then setup.sh sourced, then $@ is restored
+        rosdir = os.path.join(
+            'test-root', 'opt', 'ros', self.properties.rosdistro)
+        setup_path = os.path.join(rosdir, 'setup.sh')
+        lines_of_interest = [
+            'set --',
+            'if [ -f {} ]; then'.format(setup_path),
+            '_CATKIN_SETUP_DIR={} . {}'.format(rosdir, setup_path),
+            'fi',
+            'eval "set -- $BACKUP_ARGS"',
+        ]
+        actual_lines = []
+
+        plugin._generate_snapcraft_source_sh('test-root', None)
+        with open(os.path.join(plugin.rosdir, 'snapcraft-setup.sh'), 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line in lines_of_interest:
+                    actual_lines.append(line)
+
+        self.assertThat(
+            actual_lines, Equals(lines_of_interest),
+            "Expected ROS's setup.sh to be sourced after args were zeroed, "
+            "followed by the args being restored.")
+
+    def test_generate_snapcraft_sh_with_underlay(self):
+        self.properties.underlay = {
+            'build-path': 'test-build-underlay',
+            'run-path': 'test-run-underlay'
+        }
+        plugin = catkin.CatkinPlugin('test-part', self.properties,
+                                     self.project_options)
+
+        # Make sure $@ is zeroed, then setup.sh sourced, then $@ is restored
+        underlay_setup_path = os.path.join(
+            'test-underlay', 'setup.sh')
+        rosdir = os.path.join(
+            'test-root', 'opt', 'ros', self.properties.rosdistro)
+        setup_path = os.path.join(rosdir, 'setup.sh')
+        lines_of_interest = [
+            'set --',
+            'if [ -f {} ]; then'.format(underlay_setup_path),
+            '_CATKIN_SETUP_DIR={} . {}'.format(
+                'test-underlay', underlay_setup_path),
+            'if [ -f {} ]; then'.format(setup_path),
+            'set -- --extend',
+            '_CATKIN_SETUP_DIR={} . {}'.format(rosdir, setup_path),
+            'fi',
+            'fi',
+            'eval "set -- $BACKUP_ARGS"',
+        ]
+        actual_lines = []
+
+        plugin._generate_snapcraft_source_sh('test-root', 'test-underlay')
+        with open(os.path.join(plugin.rosdir, 'snapcraft-setup.sh'), 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line in lines_of_interest:
+                    actual_lines.append(line)
+
+        self.assertThat(
+            actual_lines, Equals(lines_of_interest),
+            "Expected ROS's setup.sh to be sourced after args were zeroed, "
+            "followed by the args being restored.")
+
+    @mock.patch.object(catkin.CatkinPlugin, 'run_output', return_value='bar')
+    def test_run_environment_no_python(self, run_mock):
+        plugin = catkin.CatkinPlugin('test-part', self.properties,
+                                     self.project_options)
+
+        python_path = os.path.join(
+            plugin.installdir, 'usr', 'lib', 'python2.7', 'dist-packages')
+
+        environment = plugin.env(plugin.installdir)
+
+        self.assertFalse(
+            'PYTHONPATH={}'.format(python_path) in environment, environment)
+
+
+class PrepareBuildTestCase(CatkinPluginTestCase):
+
+    scenarios = [
+        ('no underlay', {
+            'underlay': None,
+            'expected_underlay_path': None,
+        }),
+        ('underlay', {
+            'underlay': {
+                'build-path': 'test-build-path',
+                'run-path': 'test-run-path',
+            },
+            'expected_underlay_path': 'test-build-path'
+        })
+    ]
+
+    @mock.patch.object(catkin.CatkinPlugin, '_generate_snapcraft_source_sh')
     @mock.patch.object(catkin.CatkinPlugin, '_use_in_snap_python')
-    def test_prepare_build(self, use_in_snap_python_mock):
+    def test_prepare_build(self, use_python_mock, generate_source_mock):
+        self.properties.underlay = self.underlay
         plugin = catkin.CatkinPlugin('test-part', self.properties,
                                      self.project_options)
         os.makedirs(os.path.join(plugin.rosdir, 'test'))
@@ -740,15 +827,37 @@ class CatkinPluginTestCase(tests.TestCase):
 
         plugin._prepare_build()
 
-        self.assertTrue(use_in_snap_python_mock.called)
+        self.assertTrue(use_python_mock.called)
+        generate_source_mock.assert_called_once_with(
+            plugin.installdir, self.expected_underlay_path)
 
         for file_info in files:
             path = os.path.join(plugin.rosdir, file_info['path'])
             with open(path, 'r') as f:
                 self.assertThat(f.read(), Equals(file_info['expected']))
 
+
+class FinishBuildTestCase(CatkinPluginTestCase):
+
+    scenarios = [
+        ('no underlay', {
+            'underlay': None,
+            'expected_underlay_path': None,
+        }),
+        ('underlay', {
+            'underlay': {
+                'build-path': 'test-build-path',
+                'run-path': 'test-run-path',
+            },
+            'expected_underlay_path': 'test-run-path'
+        })
+    ]
+
+    @mock.patch.object(catkin.CatkinPlugin, '_generate_snapcraft_source_sh')
     @mock.patch.object(catkin.CatkinPlugin, '_use_in_snap_python')
-    def test_finish_build_cmake_paths(self, use_in_snap_python_mock):
+    def test_finish_build_cmake_paths(self, use_python_mock,
+                                      generate_source_mock):
+        self.properties.underlay = self.underlay
         plugin = catkin.CatkinPlugin('test-part', self.properties,
                                      self.project_options)
         os.makedirs(os.path.join(plugin.rosdir, 'test'))
@@ -792,18 +901,23 @@ class CatkinPluginTestCase(tests.TestCase):
 
         plugin._finish_build()
 
-        self.assertTrue(use_in_snap_python_mock.called)
+        self.assertTrue(use_python_mock.called)
+        generate_source_mock.assert_called_once_with(
+            '$SNAP', self.expected_underlay_path)
 
         for file_info in files:
             path = os.path.join(plugin.rosdir, file_info['path'])
             with open(path, 'r') as f:
                 self.assertThat(f.read(), Equals(file_info['expected']))
 
+    @mock.patch.object(catkin.CatkinPlugin, '_generate_snapcraft_source_sh')
     @mock.patch.object(catkin.CatkinPlugin, 'run')
     @mock.patch.object(catkin.CatkinPlugin, 'run_output', return_value='foo')
     @mock.patch.object(catkin.CatkinPlugin, '_use_in_snap_python')
-    def test_finish_build_cmake_prefix_path(self, use_in_snap_python_mock,
-                                            run_output_mock, run_mock):
+    def test_finish_build_cmake_prefix_path(self, use_python_mock,
+                                            run_output_mock, run_mock,
+                                            generate_source_mock):
+        self.properties.underlay = self.underlay
         plugin = catkin.CatkinPlugin('test-part', self.properties,
                                      self.project_options)
 
@@ -816,7 +930,9 @@ class CatkinPluginTestCase(tests.TestCase):
 
         plugin._finish_build()
 
-        self.assertTrue(use_in_snap_python_mock.called)
+        self.assertTrue(use_python_mock.called)
+        generate_source_mock.assert_called_once_with(
+            '$SNAP', self.expected_underlay_path)
 
         expected = 'CMAKE_PREFIX_PATH = []\n'
 
@@ -825,65 +941,6 @@ class CatkinPluginTestCase(tests.TestCase):
                 f.read(), expected,
                 'The absolute path to python or the CMAKE_PREFIX_PATH '
                 'was not replaced as expected')
-
-    @mock.patch.object(catkin.CatkinPlugin, 'run_output', return_value='bar')
-    def test_run_environment(self, run_mock):
-        plugin = catkin.CatkinPlugin('test-part', self.properties,
-                                     self.project_options)
-
-        python_path = os.path.join(
-            plugin.installdir, 'usr', 'lib', 'python2.7', 'dist-packages')
-        os.makedirs(python_path)
-
-        environment = plugin.env(plugin.installdir)
-
-        self.assertTrue(
-            'PYTHONPATH={}:$PYTHONPATH'.format(python_path) in
-            environment, environment)
-
-        self.assertTrue('ROS_MASTER_URI=http://localhost:11311' in environment)
-
-        self.assertTrue('ROS_HOME=$SNAP_USER_DATA/ros' in environment)
-
-        self.assertTrue('LC_ALL=C.UTF-8' in environment)
-
-        self.assertTrue('_CATKIN_SETUP_DIR={}'.format(os.path.join(
-            plugin.installdir, 'opt', 'ros', self.properties.rosdistro))
-            in environment)
-
-        # Make sure $@ is zeroed, then setup.sh sourced, then $@ is restored
-        lines_of_interest = [
-            'set --',
-            '. {}'.format(os.path.join(
-                plugin.installdir, 'opt', 'ros', self.properties.rosdistro,
-                'setup.sh')),
-            'eval "set -- $BACKUP_ARGS"',
-        ]
-        actual_lines = []
-
-        # Joining and re-splitting to get hacked script in there as well
-        for line in '\n'.join(environment).split('\n'):
-            line = line.strip()
-            if line in lines_of_interest:
-                actual_lines.append(line)
-
-        self.assertThat(
-            actual_lines, Equals(lines_of_interest),
-            "Expected ROS's setup.sh to be sourced after args were zeroed, "
-            "followed by the args being restored.")
-
-    @mock.patch.object(catkin.CatkinPlugin, 'run_output', return_value='bar')
-    def test_run_environment_no_python(self, run_mock):
-        plugin = catkin.CatkinPlugin('test-part', self.properties,
-                                     self.project_options)
-
-        python_path = os.path.join(
-            plugin.installdir, 'usr', 'lib', 'python2.7', 'dist-packages')
-
-        environment = plugin.env(plugin.installdir)
-
-        self.assertFalse(
-            'PYTHONPATH={}'.format(python_path) in environment, environment)
 
 
 class FindSystemDependenciesTestCase(tests.TestCase):

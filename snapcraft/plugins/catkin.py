@@ -101,9 +101,22 @@ class CatkinPlugin(snapcraft.BasePlugin):
             'default': 'true',
         }
 
+        # schema['properties']['underlay'] = {
+        #     'type': 'string',
+        #     'default': '',
+        # }
+
         schema['properties']['underlay'] = {
-            'type': 'string',
-            'default': '',
+            'type': 'object',
+            'properties': {
+                'build-path': {
+                    'type': 'string',
+                },
+                'run-path': {
+                    'type': 'string',
+                }
+            },
+            'required': ['build-path', 'run-path'],
         }
 
         schema['required'].append('catkin-packages')
@@ -188,12 +201,6 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
             # temporarily work around that bug by forcing the locale to
             # C.UTF-8.
             'LC_ALL=C.UTF-8',
-
-            # This environment variable points to where the setup.sh and
-            # _setup_util.py files are located. This is required at both build-
-            # and run-time.
-            '_CATKIN_SETUP_DIR={}'.format(os.path.join(
-                root, 'opt', 'ros', self.options.rosdistro)),
         ]
 
         # There's a chicken and egg problem here, everything run get's an
@@ -212,37 +219,12 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         # make sure it's in the PATH before it's run.
         env.append('PATH=$PATH:{}/usr/bin'.format(root))
 
-        # We need to source ROS's setup.sh at this point. However, it accepts
-        # arguments (thus will parse $@), and we really don't want it to, since
-        # $@ in this context will be meant for the app being launched
-        # (LP: #1660852). So we'll backup all args, source the setup.sh, then
-        # restore all args for the wrapper's `exec` line.
-        script = textwrap.dedent('''
-        if [ -e {0} ]; then
-            # Shell quote arbitrary string by replacing every occurrence of '
-            # with '\\'', then put ' at the beginning and end of the string.
-            # Prepare yourself, fun regex ahead.
-            quote()
-            {{
-                for i; do
-                    printf %s\\\\n "$i" | sed "s/\'/\'\\\\\\\\\'\'/g;1s/^/\'/;\$s/\$/\' \\\\\\\\/"
-                done
-                echo " "
-            }}
-
-            BACKUP_ARGS=$(quote "$@")
-            set --
-            . {0}
-            eval "set -- $BACKUP_ARGS"
-        fi
-        '''.format(os.path.join(  # noqa
-            root, 'opt', 'ros', self.options.rosdistro, 'setup.sh')))
-
         # Each of these lines is prepended with an `export` when the
         # environment is actually generated. In order to inject real shell code
-        # we have to hack it in by appending it on the end of an item in the
-        # environment. FIXME: There should be a better way to do this.
-        env[-1] = env[-1] + script
+        # we have to hack it in by appending it on the end of an item already
+        # in the environment. FIXME: There should be a better way to do this.
+        env[-1] = env[-1] + '\n\n' + '. {}'.format(
+            os.path.join(self.rosdir, 'snapcraft-setup.sh'))
 
         return env
 
@@ -268,8 +250,11 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         # __init__ as the underlay will probably only be valid once a
         # dependency has been staged.
         catkin = None
-        underlay = self.options.underlay
+        underlay = None
+        if self.options.underlay:
+            underlay = self.options.underlay['build-path']
         if underlay:
+            underlay = self.options.underlay['build-path']
             if not os.path.isdir(underlay):
                 raise EnvironmentError(
                     'Requested underlay ({!r}) does not point to a valid '
@@ -349,6 +334,58 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(self._catkin_path)
 
+    def _generate_snapcraft_source_sh(self, root, underlay_path):
+        rosdir = os.path.join(root, 'opt', 'ros', self.options.rosdistro)
+        if underlay_path:
+            source_script = textwrap.dedent('''
+                if [ -f {underlay_setup} ]; then
+                    _CATKIN_SETUP_DIR={underlay} . {underlay_setup}
+                    if [ -f {rosdir_setup} ]; then
+                        set -- --extend
+                        _CATKIN_SETUP_DIR={rosdir} . {rosdir_setup}
+                    fi
+                fi
+            ''').format(
+                underlay=underlay_path,
+                underlay_setup=os.path.join(underlay_path, 'setup.sh'),
+                rosdir=rosdir,
+                rosdir_setup=os.path.join(rosdir, 'setup.sh'))
+        else:
+            source_script = textwrap.dedent('''
+                if [ -f {rosdir_setup} ]; then
+                    _CATKIN_SETUP_DIR={rosdir} . {rosdir_setup}
+                fi
+            ''').format(
+                rosdir=rosdir,
+                rosdir_setup=os.path.join(rosdir, 'setup.sh'))
+
+        # We need to source ROS's setup.sh at this point. However, it accepts
+        # arguments (thus will parse $@), and we really don't want it to, since
+        # $@ in this context will be meant for the app being launched
+        # (LP: #1660852). So we'll backup all args, source the setup.sh, then
+        # restore all args for the wrapper's `exec` line.
+        script = textwrap.dedent('''
+            # Shell quote arbitrary string by replacing every occurrence of '
+            # with '\\'', then put ' at the beginning and end of the string.
+            # Prepare yourself, fun regex ahead.
+            quote()
+            {{
+                for i; do
+                    printf %s\\\\n "$i" | sed "s/\'/\'\\\\\\\\\'\'/g;1s/^/\'/;\$s/\$/\' \\\\\\\\/"
+                done
+                echo " "
+            }}
+
+            BACKUP_ARGS=$(quote "$@")
+            set --
+            {}
+            eval "set -- $BACKUP_ARGS"
+        ''').format(source_script)  # noqa
+
+        os.makedirs(self.rosdir, exist_ok=True)
+        with open(os.path.join(self.rosdir, 'snapcraft-setup.sh'), 'w') as f:
+            f.write(script)
+
     @property
     def rosdir(self):
         return os.path.join(self.installdir, 'opt', 'ros',
@@ -357,19 +394,6 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
     def _run_in_bash(self, commandlist, cwd=None, env=None):
         with tempfile.NamedTemporaryFile(mode='w') as f:
             f.write('set -e\n')
-
-            # If we're overlaying on another workspace (the underlay), we need
-            # to source the respective setup.sh's in order. If we're not
-            # overlaying, then the sourcing is already done by env().
-            underlay = self.options.underlay
-            if underlay:
-                f.write('_CATKIN_SETUP_DIR={} source {}\n'.format(
-                    underlay, os.path.join(underlay, 'setup.sh')))
-                rosdir = self.rosdir
-                f.write(
-                    '[ -f {1} ] && _CATKIN_SETUP_DIR={0} source {1} --extend\n'
-                    .format(rosdir, os.path.join(rosdir, 'setup.sh')))
-
             f.write('exec {}\n'.format(' '.join(commandlist)))
             f.flush()
 
@@ -409,6 +433,11 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
             return path
 
         self._rewrite_cmake_paths(_new_path)
+
+        underlay = None
+        if self.options.underlay:
+            underlay = self.options.underlay['build-path']
+        self._generate_snapcraft_source_sh(self.installdir, underlay)
 
     def _rewrite_cmake_paths(self, new_path_callable):
         def _rewrite_paths(match):
@@ -461,6 +490,11 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
                 f.seek(0)
                 f.truncate()
                 f.write(replaced)
+
+        underlay = None
+        if self.options.underlay:
+            underlay = self.options.underlay['run-path']
+        self._generate_snapcraft_source_sh('$SNAP', underlay)
 
     def _use_in_snap_python(self):
         # Fix all shebangs to use the in-snap python.
