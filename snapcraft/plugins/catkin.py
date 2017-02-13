@@ -35,9 +35,18 @@ Additionally, this plugin uses the following plugin-specific keywords:
       (boolean)
       Whether or not to include roscore with the part. Defaults to true.
     - underlay:
-      (string)
-      Path to existing workspace to underlay the one being built, for example
-      $SNAPCRAFT_STAGE/opt/ros/kinetic. Defaults to ''.
+      (object)
+      Used to inform Snapcraft that this snap isn't standalone, and is actually
+      overlaying a workspace from another snap via content sharing. Made up of
+      two properties:
+      - build-path:
+        (string)
+        Build-time path to existing workspace to underlay the one being built,
+        for example '$SNAPCRAFT_STAGE/opt/ros/kinetic'.
+      - run-path:
+        (string)
+        Run-time path of the underlay workspace (e.g. a subdirectory of the
+        content interface's 'target' attribute.)
 """
 
 import contextlib
@@ -100,11 +109,6 @@ class CatkinPlugin(snapcraft.BasePlugin):
             'type': 'boolean',
             'default': 'true',
         }
-
-        # schema['properties']['underlay'] = {
-        #     'type': 'string',
-        #     'default': '',
-        # }
 
         schema['properties']['underlay'] = {
             'type': 'object',
