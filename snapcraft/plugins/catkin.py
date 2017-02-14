@@ -223,12 +223,17 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         # make sure it's in the PATH before it's run.
         env.append('PATH=$PATH:{}/usr/bin'.format(root))
 
+        if self.options.underlay:
+            script = '. {}'.format(os.path.join(
+                self.rosdir, 'snapcraft-setup.sh'))
+        else:
+            script = self._source_setup_sh(root, None)
+
         # Each of these lines is prepended with an `export` when the
         # environment is actually generated. In order to inject real shell code
         # we have to hack it in by appending it on the end of an item already
         # in the environment. FIXME: There should be a better way to do this.
-        env[-1] = env[-1] + '\n\n' + '. {}'.format(
-            os.path.join(self.rosdir, 'snapcraft-setup.sh'))
+        env[-1] = env[-1] + '\n\n' + script
 
         return env
 
@@ -245,7 +250,7 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         super().pull()
 
         # Make sure the package path exists before continuing
-        if not os.path.exists(self._ros_package_path):
+        if self.catkin_packages and not os.path.exists(self._ros_package_path):
             raise FileNotFoundError(
                 'Unable to find package path: "{}"'.format(
                     self._ros_package_path))
@@ -258,14 +263,13 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         if self.options.underlay:
             underlay = self.options.underlay['build-path']
         if underlay:
-            underlay = self.options.underlay['build-path']
             if not os.path.isdir(underlay):
-                raise EnvironmentError(
+                raise errors.SnapcraftEnvironmentError(
                     'Requested underlay ({!r}) does not point to a valid '
                     'directory'.format(underlay))
 
             if not os.path.isfile(os.path.join(underlay, 'setup.sh')):
-                raise EnvironmentError(
+                raise errors.SnapcraftEnvironmentError(
                     'Requested underlay ({!r}) does not contain a '
                     'setup.sh'.format(underlay))
 
@@ -274,6 +278,8 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
                 self.options.rosdistro, underlay, self._catkin_path,
                 self.PLUGIN_STAGE_SOURCES, self.project)
             catkin.setup()
+
+            self._generate_snapcraft_setup_sh(self.installdir, underlay)
 
         # Pull our own compilers so we use ones that match up with the version
         # of ROS we're using.
@@ -338,7 +344,7 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(self._catkin_path)
 
-    def _generate_snapcraft_source_sh(self, root, underlay_path):
+    def _source_setup_sh(self, root, underlay_path):
         rosdir = os.path.join(root, 'opt', 'ros', self.options.rosdistro)
         if underlay_path:
             source_script = textwrap.dedent('''
@@ -368,7 +374,7 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         # $@ in this context will be meant for the app being launched
         # (LP: #1660852). So we'll backup all args, source the setup.sh, then
         # restore all args for the wrapper's `exec` line.
-        script = textwrap.dedent('''
+        return textwrap.dedent('''
             # Shell quote arbitrary string by replacing every occurrence of '
             # with '\\'', then put ' at the beginning and end of the string.
             # Prepare yourself, fun regex ahead.
@@ -386,6 +392,8 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
             eval "set -- $BACKUP_ARGS"
         ''').format(source_script)  # noqa
 
+    def _generate_snapcraft_setup_sh(self, root, underlay_path):
+        script = self._source_setup_sh(root, underlay_path)
         os.makedirs(self.rosdir, exist_ok=True)
         with open(os.path.join(self.rosdir, 'snapcraft-setup.sh'), 'w') as f:
             f.write(script)
@@ -437,11 +445,6 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
             return path
 
         self._rewrite_cmake_paths(_new_path)
-
-        underlay = None
-        if self.options.underlay:
-            underlay = self.options.underlay['build-path']
-        self._generate_snapcraft_source_sh(self.installdir, underlay)
 
     def _rewrite_cmake_paths(self, new_path_callable):
         def _rewrite_paths(match):
@@ -495,10 +498,9 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
                 f.truncate()
                 f.write(replaced)
 
-        underlay = None
         if self.options.underlay:
             underlay = self.options.underlay['run-path']
-        self._generate_snapcraft_source_sh('$SNAP', underlay)
+            self._generate_snapcraft_setup_sh('$SNAP', underlay)
 
     def _use_in_snap_python(self):
         # Fix all shebangs to use the in-snap python.
@@ -563,6 +565,18 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         # This has been fixed in Catkin Tools... perhaps we should be using
         # that instead.
         self._run_in_bash(catkincmd, env=compilers.environment)
+
+    def snap_fileset(self):
+        """Filter useless files out of the snap.
+
+        - opt/ros/<rosdistro>/.rosinstall points to the part installdir, and
+          isn't useful from the snap anyway.
+        """
+
+        fileset = super().snap_fileset()
+        fileset.append('-{}'.format(
+            os.path.join('opt', 'ros', self.options.rosdistro, '.rosinstall')))
+        return fileset
 
 
 def _find_system_dependencies(catkin_packages, rosdep, catkin):
