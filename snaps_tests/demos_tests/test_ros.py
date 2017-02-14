@@ -21,6 +21,7 @@ import re
 import subprocess
 from platform import linux_distribution
 from unittest import skipUnless
+from testtools.matchers import MatchesRegex
 
 
 class ROSTestCase(snaps_tests.SnapsTestCase):
@@ -47,8 +48,12 @@ class ROSTestCase(snaps_tests.SnapsTestCase):
             '.*Usage: roslaunch.*')
 
         # Make sure the talker/listener system actually comes up by verifying
-        # that the listener receives something after 5 seconds.
-        self.assert_command_in_snappy_testbed_with_regex([
-            'timeout', '--preserve-status', '5s',
-            '/snap/bin/ros-example.launch-project'],
-            '.*I heard Hello world.*', re.DOTALL)
+        # that the listener receives something after 5 seconds. `timeout` has
+        # a `--preserve-status` option, but it doesn't always work, so we'll
+        # leave it off and just catch the subprocess error.
+        try:
+            self.snappy_testbed.run_command(
+                ['timeout', '5s', '/snap/bin/ros-example.launch-project'])
+        except subprocess.CalledProcessError as e:
+            self.assertThat(e.output.decode('utf8'), MatchesRegex(
+                r'.*I heard Hello world.*', re.DOTALL))
