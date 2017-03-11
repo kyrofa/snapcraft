@@ -170,7 +170,7 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
 
             # Various ROS tools (e.g. rospack, roscore) keep a cache or a log,
             # and use $ROS_HOME to determine where to put them.
-            'ROS_HOME=$SNAP_USER_DATA/ros',
+            'ROS_HOME=${SNAP_USER_DATA:-/tmp}/ros',
 
             # FIXME: LP: #1576411 breaks ROS snaps on the desktop, so we'll
             # temporarily work around that bug by forcing the locale to
