@@ -42,11 +42,14 @@ class SnapcraftError(Exception):
         return self.fmt.format([], **self.__dict__)
 
 
-class MissingState(SnapcraftError):
-    fmt = '{message}'
+class MissingStateCleanError(SnapcraftError):
+    fmt = (
+        "Failed to clean step {step!r}: Missing necessary state. This won't "
+        "work until a complete clean has occurred."
+    )
 
-    def __init__(self, message):
-        super().__init__(message=message)
+    def __init__(self, step):
+        super().__init__(step=step)
 
 
 class SnapcraftEnvironmentError(SnapcraftError):
@@ -73,6 +76,27 @@ class DuplicateAliasError(SnapcraftError):
             self.aliases = ','.join(self.aliases)
 
         return super().__str__()
+
+
+class InvalidAppCommandError(SnapcraftError):
+
+    fmt = (
+        'The specified command {command!r} defined in the app {app!r} does '
+        'not exist or is not executable'
+    )
+
+    def __init__(self, command, app):
+        super().__init__(command=command, app=app)
+
+
+class InvalidDesktopFileError(SnapcraftError):
+
+    fmt = (
+        'Invalid desktop file {filename!r}: {message}'
+    )
+
+    def __init__(self, filename, message):
+        super().__init__(filename=filename, message=message)
 
 
 class SnapcraftPartMissingError(SnapcraftError):
@@ -162,6 +186,14 @@ class MissingGadgetError(SnapcraftError):
         'in the root of your snapcraft project\n\n'
         'Read more about gadget snaps and the gadget.yaml on:\n'
         'https://github.com/snapcore/snapd/wiki/Gadget-snap')
+
+
+class PluginOutdatedError(SnapcraftError):
+
+    fmt = 'This plugin is outdated: {message}'
+
+    def __init__(self, message):
+        super().__init__(message=message)
 
 
 class RequiredCommandFailure(SnapcraftError):

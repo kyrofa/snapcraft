@@ -35,10 +35,7 @@ from tabulate import tabulate
 
 from snapcraft.file_utils import calculate_sha3_384
 from snapcraft import storeapi
-from snapcraft.storeapi.errors import (
-    StoreDeltaApplicationError,
-    StoreAssertionError,
-)
+from snapcraft.storeapi import errors
 from snapcraft.internal import (
     cache,
     deltas,
@@ -236,9 +233,7 @@ def _export_key(name, account_id):
 
 def list_keys():
     if not repo.Repo.is_package_installed('snapd'):
-        raise EnvironmentError(
-            'The snapd package is not installed. In order to use `list-keys`, '
-            'you must run `apt install snapd`.')
+        raise errors.MissingSnapdError('list-keys')
     keys = list(_get_usable_keys())
     store = storeapi.StoreClient()
     with _requires_login():
@@ -258,9 +253,7 @@ def list_keys():
 
 def create_key(name):
     if not repo.Repo.is_package_installed('snapd'):
-        raise EnvironmentError(
-            'The snapd package is not installed. In order to use '
-            '`create-key`, you must run `apt install snapd`.')
+        raise errors.MissingSnapdError('create-key')
     if not name:
         name = 'default'
     keys = list(_get_usable_keys(name=name))
@@ -302,9 +295,7 @@ def _maybe_prompt_for_key(name):
 
 def register_key(name):
     if not repo.Repo.is_package_installed('snapd'):
-        raise EnvironmentError(
-            'The snapd package is not installed. In order to use '
-            '`register-key`, you must run `apt install snapd`.')
+        raise errors.MissingSnapdError('register-key')
     key = _maybe_prompt_for_key(name)
     store = storeapi.StoreClient()
     if not _login(store, acls=['modify_account_key'], save=False):
@@ -346,9 +337,7 @@ def _generate_snap_build(authority_id, snap_id, grade, key_name,
 
 def sign_build(snap_filename, key_name=None, local=False):
     if not repo.Repo.is_package_installed('snapd'):
-        raise EnvironmentError(
-            'The snapd package is not installed. In order to use '
-            '`sign-build`, you must run `apt install snapd`.')
+        raise errors.MissingSnapdError('sign-build')
 
     if not os.path.exists(snap_filename):
         raise FileNotFoundError(
@@ -432,7 +421,7 @@ def push(snap_filename, release_channels=None):
     if sha3_384_available and source_snap:
         try:
             result = _push_delta(snap_name, snap_filename, source_snap)
-        except StoreDeltaApplicationError as e:
+        except errors.StoreDeltaApplicationError as e:
             logger.warning(
                 'Error generating delta: {}\n'
                 'Falling back to pushing full snap...'.format(str(e)))
@@ -482,7 +471,7 @@ def _push_delta(snap_name, snap_filename, source_snap):
         delta_filename = xdelta_generator.make_delta()
     except (DeltaGenerationError, DeltaGenerationTooBigError,
             DeltaToolError) as e:
-        raise StoreDeltaApplicationError(str(e))
+        raise errors.StoreDeltaApplicationError(str(e))
 
     snap_hashes = {'source_hash': calculate_sha3_384(source_snap),
                    'target_hash': calculate_sha3_384(target_snap),
@@ -502,7 +491,7 @@ def _push_delta(snap_name, snap_filename, source_snap):
         delta_tracker.raise_for_code()
     except storeapi.errors.StoreReviewError as e:
         if e.code == 'processing_upload_delta_error':
-            raise StoreDeltaApplicationError
+            raise errors.StoreDeltaApplicationError
         else:
             raise
     finally:
@@ -847,7 +836,7 @@ _COLLABORATION_HEADER = dedent("""\
     #
     # All timestamps are UTC, and the "now" special string will be replaced by
     # the current time. Do not remove entries or use an until time in the past
-    # unless you want existing snaps provided by the developer to stop working.""") # noqa
+    # unless you want existing snaps provided by the developer to stop working.""")  # noqa
 
 
 def _edit_collaborators(developers):
@@ -947,7 +936,7 @@ def _sign_assertion(snap_name, assertion, key, endpoint):
     assertion, err = snap_sign.communicate(input=data)
     if snap_sign.returncode != 0:
         err = err.decode('ascii', errors='replace')
-        raise StoreAssertionError(
+        raise errors.StoreAssertionError(
             endpoint=endpoint, snap_name=snap_name, error=err)
 
     return assertion

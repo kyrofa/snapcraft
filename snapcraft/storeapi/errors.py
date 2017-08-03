@@ -381,8 +381,12 @@ class StoreSnapRevisionsError(StoreError):
             series=series or 'any', error=error)
 
 
-class StoreDeltaApplicationError(Exception):
-    pass
+class StoreDeltaApplicationError(StoreError):
+
+    fmt = '{message}'
+
+    def __init__(self, message):
+        super().__init__(message=message)
 
 
 class StoreSnapStatusError(StoreSnapRevisionsError):
@@ -410,3 +414,14 @@ class StoreChannelClosingError(StoreError):
 class StoreAssertionError(StoreError):
 
     fmt = 'Error signing {endpoint} assertion for {snap_name}: {error!s}'
+
+
+class MissingSnapdError(SnapcraftError):
+
+    fmt = (
+        'The snapd package is not installed. In order to use {command!r}, '
+        "you must run 'apt install snapd'."
+    )
+
+    def __init__(self, command):
+        super().__init__(command=command)
