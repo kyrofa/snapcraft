@@ -16,8 +16,10 @@
 
 import logging
 
-from snapcraft.internal import repo
-from snapcraft.internal.pluginhandler import stage_package_grammar
+from snapcraft.internal import (
+    grammar,
+    repo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +71,7 @@ class StagePackageHandler:
     def _stage_packages(self):
         # Comparing to None here since after calculation it may be an empty set
         if self.__stage_packages is None:
-            self.__stage_packages = stage_package_grammar.process_grammar(
+            self.__stage_packages = grammar.process_grammar(
                 self._grammar, self._project_options, self._repo)
 
         return self.__stage_packages

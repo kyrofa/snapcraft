@@ -20,7 +20,7 @@ from unittest import mock
 
 import snapcraft
 
-from snapcraft.internal.pluginhandler.stage_package_grammar import (
+from snapcraft.internal.grammar import (
     process_grammar
 )
 
@@ -51,9 +51,7 @@ class StagePackageHandlerTestCase(tests.TestCase):
     def setUp(self):
         super().setUp()
 
-        patcher = mock.patch(
-            'snapcraft.internal.pluginhandler.stage_package_grammar.'
-            'process_grammar')
+        patcher = mock.patch('snapcraft.internal.grammar.process_grammar')
         self.process_grammar_mock = patcher.start()
         self.process_grammar_mock.side_effect = process_grammar
         self.addCleanup(patcher.stop)
