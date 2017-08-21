@@ -22,32 +22,33 @@ class TryStatement:
 
     For example:
     >>> import tempfile
-    >>> from snapcraft import repo, ProjectOptions
+    >>> from snapcraft import ProjectOptions
+    >>> def checker(primitive):
+    ...     return 'invalid' not in primitive
     >>> with tempfile.TemporaryDirectory() as cache_dir:
-    ...     repo_instance = repo.Repo(cache_dir)
     ...     options = ProjectOptions(target_deb_arch='i386')
     ...     clause = TryStatement(body=['invalid'], project_options=options,
-    ...                           repo_instance=repo_instance)
+    ...                           checker=checker)
     ...     clause.add_else(['valid'])
     ...     clause.process()
     {'valid'}
     """
 
-    def __init__(self, *, body, project_options, repo_instance):
+    def __init__(self, *, body, project_options, checker):
         """Create an _OnStatement instance.
 
         :param list body: The body of the 'try' clause.
         :param project_options: Instance of ProjectOptions to use to process
                                 clause.
         :type project_options: snapcraft.ProjectOptions
-        :param repo_instance: repo.Repo instance used for checking package
-                              validity.
-        :type repo_instance: repo.Repo
+        :param checker: callable accepting a single primitive, returning
+                        true if it is valid
+        :type checker: callable
         """
 
         self._body = body
         self._project_options = project_options
-        self._repo_instance = repo_instance
+        self._checker = checker
         self._else_bodies = []
 
     def add_else(self, else_body):
@@ -68,11 +69,11 @@ class TryStatement:
         """
 
         packages = process_grammar(
-            self._body, self._project_options, self._repo_instance)
+            self._body, self._project_options, self._checker)
 
         # If some of the packages in the 'try' were invalid, then we need to
         # process the 'else' clauses.
-        if not _all_packages_valid(packages, self._repo_instance):
+        if not _all_packages_valid(packages, self._checker):
             if not self._else_bodies:
                 # If there are no 'else' statements, the 'try' was considered
                 # optional and it failed, which means it doesn't resolve to
@@ -84,10 +85,10 @@ class TryStatement:
                     continue
 
                 packages = process_grammar(
-                    else_body, self._project_options, self._repo_instance)
+                    else_body, self._project_options, self._checker)
 
                 # Stop once an 'else' clause gives us valid packages
-                if _all_packages_valid(packages, self._repo_instance):
+                if _all_packages_valid(packages, self._checker):
                     break
 
         return packages
@@ -96,25 +97,27 @@ class TryStatement:
         return "'try'"
 
 
-def _all_packages_valid(packages, repo_instance):
+def _all_packages_valid(packages, checker):
     """Ensure that all packages are valid.
 
     :param packages: Iterable container of package names.
-    :param repo_instance: repo.Repo instance to use for validity check.
-    :type repo_instance: repo.Repo
+    :param checker: callable accepting a single primitive, returning
+                    true if it is valid
+    :type checker: callable
 
     For example:
     >>> import tempfile
-    >>> from snapcraft import repo, ProjectOptions
+    >>> from snapcraft import ProjectOptions
+    >>> def checker(primitive):
+    ...     return 'invalid' not in primitive
     >>> with tempfile.TemporaryDirectory() as cache_dir:
-    ...     ubuntu = repo.Repo(cache_dir)
-    ...     _all_packages_valid(['valid'], ubuntu)
-    ...     _all_packages_valid(['valid', 'invalid'], ubuntu)
+    ...     _all_packages_valid(['valid'], checker)
+    ...     _all_packages_valid(['valid', 'invalid'], checker)
     True
     False
     """
 
     for package in packages:
-        if not repo_instance.is_valid(package):
+        if not checker(package):
             return False
     return True

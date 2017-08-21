@@ -32,6 +32,7 @@ from snapcraft import file_utils
 from snapcraft.internal import (
     common,
     errors,
+    grammar,
     libraries,
     repo,
     sources,
@@ -118,6 +119,11 @@ class PluginHandler:
         self._stage_package_handler = StagePackageHandler(
             stage_packages, self.ubuntudir,
             sources=sources, project_options=self._project_options)
+
+        build_packages_grammar = getattr(self.code, 'build_packages', [])
+        self.build_packages = grammar.process_grammar(
+            build_packages_grammar, project_options,
+            repo.Ubuntu.build_package_is_valid)
 
     def _load_code(self, plugin_name, properties, part_schema,
                    definitions_schema):

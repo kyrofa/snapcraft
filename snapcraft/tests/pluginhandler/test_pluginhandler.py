@@ -370,6 +370,7 @@ class PluginTestCase(tests.TestCase):
         mock_plugin.schema.return_value = {}
         mock_plugin.get_pull_properties.return_value = []
         mock_plugin.get_build_properties.return_value = []
+        mock_plugin.return_value.build_packages = []
         plugin_mock.return_value = mock_plugin
         local_load_mock.side_effect = ImportError()
         mocks.loadplugin('mock-part', 'mock')

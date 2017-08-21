@@ -24,16 +24,16 @@ _ELSE_CLAUSE_PATTERN = re.compile(r'\Aelse\Z')
 _ELSE_FAIL_PATTERN = re.compile(r'\Aelse\s+fail\Z')
 
 
-def process_grammar(grammar, project_options, repo_instance):
+def process_grammar(grammar, project_options, checker):
     """Process stage packages grammar and extract packages to actually stage.
 
     :param list grammar: Unprocessed stage-packages grammar.
     :param project_options: Instance of ProjectOptions to use to determine
                             stage packages.
     :type project_options: snapcraft.ProjectOptions
-    :param repo_instance: repo.Repo instance used for checking package
-                          validity.
-    :type repo_instance: repo.Repo
+    :param checker: callable accepting a single primitive, returning
+                    true if it is valid
+    :type checker: callable
 
     :return: Packages to stage
     :rtype: set
@@ -53,7 +53,7 @@ def process_grammar(grammar, project_options, repo_instance):
                 packages.add(section)
         elif isinstance(section, dict):
             statement = _parse_dict(
-                section, statement, statements, project_options, repo_instance)
+                section, statement, statements, project_options, checker)
         else:
             # jsonschema should never let us get here.
             raise GrammarSyntaxError(
@@ -68,7 +68,7 @@ def process_grammar(grammar, project_options, repo_instance):
 
 
 def _parse_dict(section, statement, statements, project_options,
-                repo_instance):
+                checker):
     from ._on import OnStatement
     from ._try import TryStatement
 
@@ -82,7 +82,7 @@ def _parse_dict(section, statement, statements, project_options,
 
             statement = OnStatement(
                 on=key, body=value, project_options=project_options,
-                repo_instance=repo_instance)
+                checker=checker)
 
         if _TRY_CLAUSE_PATTERN.match(key):
             # We've come across the begining of a 'try' statement.
@@ -93,7 +93,7 @@ def _parse_dict(section, statement, statements, project_options,
 
             statement = TryStatement(
                 body=value, project_options=project_options,
-                repo_instance=repo_instance)
+                checker=checker)
 
         if _ELSE_CLAUSE_PATTERN.match(key):
             _handle_else(statement, value)

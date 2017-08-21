@@ -72,7 +72,7 @@ class StagePackageHandler:
         # Comparing to None here since after calculation it may be an empty set
         if self.__stage_packages is None:
             self.__stage_packages = grammar.process_grammar(
-                self._grammar, self._project_options, self._repo)
+                self._grammar, self._project_options, self._repo.is_valid)
 
         return self.__stage_packages
 

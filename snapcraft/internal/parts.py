@@ -265,11 +265,10 @@ class PartsConfig:
             part_schema=self._validator.part_schema,
             definitions_schema=self._validator.definitions_schema)
 
-        self.build_tools += part.code.build_packages
+        self.build_tools |= part.build_packages
         if part.source_handler and part.source_handler.command:
-            self.build_tools.append(
-                repo.Repo.get_packages_for_source_type(
-                    part.source_handler.command))
+            self.build_tools |= repo.Repo.get_packages_for_source_type(
+                part.source_handler.command)
         self.all_parts.append(part)
 
         return part

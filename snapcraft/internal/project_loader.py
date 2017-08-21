@@ -28,8 +28,10 @@ from snapcraft import formatting_utils
 from snapcraft.internal import (
     common,
     errors,
+    grammar,
     libraries,
     parts,
+    repo,
     states,
 )
 from snapcraft._schema import Validator
@@ -108,8 +110,11 @@ class Config:
         self.data = self._expand_env(snapcraft_yaml)
         self._ensure_no_duplicate_app_aliases()
 
-        self.build_tools = self.data.get('build-packages', [])
-        self.build_tools.extend(project_options.additional_build_packages)
+        global_build_packages_grammar = self.data.get('build-packages', [])
+        self.build_tools = grammar.process_grammar(
+            global_build_packages_grammar, project_options,
+            repo.Ubuntu.build_package_is_valid)
+        self.build_tools |= set(project_options.additional_build_packages)
 
         self.parts = parts.PartsConfig(self.data,
                                        self._project_options,

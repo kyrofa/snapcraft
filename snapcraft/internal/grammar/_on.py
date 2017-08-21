@@ -31,19 +31,20 @@ class OnStatement:
 
     For example:
     >>> import tempfile
-    >>> from snapcraft import repo, ProjectOptions
+    >>> from snapcraft import ProjectOptions
+    >>> def checker(primitive):
+    ...     return True
     >>> with tempfile.TemporaryDirectory() as cache_dir:
-    ...     repo_instance = repo.Repo(cache_dir)
     ...     options = ProjectOptions(target_deb_arch='i386')
     ...     clause = OnStatement(on='on amd64', body=['foo'],
     ...                          project_options=options,
-    ...                          repo_instance=repo_instance)
+    ...                          checker=checker)
     ...     clause.add_else(['bar'])
     ...     clause.process()
     {'bar'}
     """
 
-    def __init__(self, *, on, body, project_options, repo_instance):
+    def __init__(self, *, on, body, project_options, checker):
         """Create an _OnStatement instance.
 
         :param str on: The 'on <selectors>' part of the clause.
@@ -51,15 +52,15 @@ class OnStatement:
         :param project_options: Instance of ProjectOptions to use to process
                                 clause.
         :type project_options: snapcraft.ProjectOptions
-        :param repo_instance: repo.Repo instance used for checking package
-                              validity.
-        :type repo_instance: repo.Repo
+        :param checker: callable accepting a single primitive, returning
+                        true if it is valid
+        :type checker: callable
         """
 
         self.selectors = _extract_on_clause_selectors(on)
         self._body = body
         self._project_options = project_options
-        self._repo_instance = repo_instance
+        self._checker = checker
         self._else_bodies = []
 
     def add_else(self, else_body):
@@ -87,7 +88,7 @@ class OnStatement:
         # selector.
         if (len(self.selectors) == 1) and (target_arch in self.selectors):
             packages = process_grammar(
-                self._body, self._project_options, self._repo_instance)
+                self._body, self._project_options, self._checker)
         else:
             for else_body in self._else_bodies:
                 if not else_body:
@@ -95,7 +96,7 @@ class OnStatement:
                     raise UnsatisfiedStatementError(self)
 
                 packages = process_grammar(
-                    else_body, self._project_options, self._repo_instance)
+                    else_body, self._project_options, self._checker)
                 if packages:
                     break
 

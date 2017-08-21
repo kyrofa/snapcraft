@@ -300,7 +300,7 @@ parts:
 
         def load_effect(*args, **kwargs):
             mock_part = unittest.mock.Mock()
-            mock_part.code.build_packages = []
+            mock_part.build_packages = set()
             mock_part.deps = []
             mock_part.name = args[0]
 
@@ -356,8 +356,8 @@ parts:
         config = project_loader.Config(project_options)
 
         self.assertEqual(config.parts.build_tools,
-                         ['gcc-arm-linux-gnueabihf',
-                          'libc6-dev-armhf-cross'])
+                         {'gcc-arm-linux-gnueabihf',
+                          'libc6-dev-armhf-cross'})
 
     def test_config_has_no_extra_build_tools_when_not_cross_compiling(self):
         class ProjectOptionsFake(snapcraft.ProjectOptions):
@@ -379,7 +379,7 @@ parts:
         self.make_snapcraft_yaml(yaml)
         config = project_loader.Config(ProjectOptionsFake())
 
-        self.assertEqual(config.parts.build_tools, [])
+        self.assertEqual(config.parts.build_tools, set())
 
     def test_config_loop(self):
         fake_logger = fixtures.FakeLogger(level=logging.ERROR)
