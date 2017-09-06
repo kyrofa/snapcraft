@@ -53,12 +53,9 @@ be preferred instead and no interpreter would be brought in through
 """
 
 import collections
-import json
 import os
 import re
-import shutil
 import stat
-import tempfile
 from contextlib import contextmanager
 from glob import glob
 from shutil import which
@@ -167,11 +164,22 @@ class PythonPlugin(snapcraft.BasePlugin):
         else:
             return super().stage_packages
 
+    @property
+    def _pip(self):
+        if not self.__pip:
+            self.__pip = _python.pip.Pip(
+                python_version=self.options.python_version,
+                part_dir=self.partdir,
+                install_dir=self.installdir,
+                stage_dir=self.project.stage_dir)
+        return self.__pip
+
     def __init__(self, name, options, project):
         super().__init__(name, options, project)
         self.build_packages.extend(self.plugin_build_packages)
         self._python_package_dir = os.path.join(self.partdir, 'packages')
         self._manifest = collections.OrderedDict()
+        self.__pip = None
 
     def pull(self):
         super().pull()
@@ -179,19 +187,27 @@ class PythonPlugin(snapcraft.BasePlugin):
         setup_py = 'setup.py'
         if os.listdir(self.sourcedir):
             setup_py = os.path.join(self.sourcedir, 'setup.py')
+
+        constraints = []
+        if self.options.constraints:
+            if isurl(self.options.constraints):
+                constraints = self.options.constraints
+            else:
+                constraints = os.path.join(self.sourcedir,
+                                           self.options.constraints)
+
         with simple_env_bzr(os.path.join(self.installdir, 'bin')):
-            pip = _python.pip.Pip(
-                python_version=self.options.python_version,
-                part_dir=self.partdir,
-                install_dir=self.installdir,
-                stage_dir=self.project.stage_dir)
-            pip.install_from_setup_py(setup_py)
+            # First, fetch any python-packages requested
+            self._pip.download(self.options.python_packages)
+
+            # Now install the source itself with its setup.py
+            self._pip.install_from_setup_py(
+                setup_py=setup_py, constraints=constraints,
+                dependency_links=self.options.process_dependency_links)
 
     def clean_pull(self):
         super().clean_pull()
-
-        if os.path.isdir(self._python_package_dir):
-            shutil.rmtree(self._python_package_dir)
+        self._pip.clean_packages()
 
     def _fix_permissions(self):
         for root, dirs, files in os.walk(self.installdir):
@@ -204,12 +220,7 @@ class PythonPlugin(snapcraft.BasePlugin):
         super().build()
 
         with simple_env_bzr(os.path.join(self.installdir, 'bin')):
-            pip = _python.pip.Pip(
-                python_version=self.options.python_version,
-                part_dir=self.partdir,
-                install_dir=self.installdir,
-                stage_dir=self.stage_dir)
-            installed_pipy_packages = pip.list()
+            installed_pipy_packages = self._pip.list()
         # We record the requirements and constraints files only if they are
         # remote. If they are local, they are already tracked with the source.
         if self.options.requirements:
@@ -301,65 +312,6 @@ class PythonPlugin(snapcraft.BasePlugin):
         # the python plugin.
         fileset.append('-lib/python*/site-packages/*/RECORD')
         return fileset
-
-
-class _Pip:
-
-    def __init__(self, *, exec_func, runnable, package_dir, env,
-                 constraints=None, dependency_links=None,
-                 extra_install_args=None):
-        self._exec_func = exec_func
-        if isinstance(runnable, str):
-            self._runnable = [runnable]
-        else:
-            self._runnable = runnable
-        self._package_dir = package_dir
-        self._env = env
-
-        self._extra_install_args = extra_install_args or []
-
-        self._extra_pip_args = []
-        if constraints:
-            self._extra_pip_args.extend(['--constraint', constraints])
-
-        if dependency_links:
-            self._extra_pip_args.append('--process-dependency-links')
-
-    def list(self, exec_func=None):
-        """Return a dict of installed python packages with versions."""
-        if not exec_func:
-            exec_func = self._exec_func
-        cmd = [*self._runnable, 'list', '--format=json']
-
-        output = exec_func(cmd, env=self._env)
-        packages = collections.OrderedDict()
-        for package in json.loads(
-                output, object_pairs_hook=collections.OrderedDict):
-            packages[package['name']] = package['version']
-        return packages
-
-    def wheel(self, args, **kwargs):
-        cmd = [
-            *self._runnable, 'wheel',
-            '--disable-pip-version-check', '--no-index',
-            '--find-links', self._package_dir,
-        ]
-        cmd.extend(self._extra_pip_args)
-
-        os.makedirs(self._package_dir, exist_ok=True)
-
-        wheels = []
-        with tempfile.TemporaryDirectory() as temp_dir:
-            cmd.extend(['--wheel-dir', temp_dir])
-            cmd.extend(args)
-            self._exec_func(cmd, env=self._env, **kwargs)
-            wheels = os.listdir(temp_dir)
-            for wheel in wheels:
-                file_utils.link_or_copy(
-                    os.path.join(temp_dir, wheel),
-                    os.path.join(self._package_dir, wheel))
-
-        return [os.path.join(self._package_dir, wheel) for wheel in wheels]
 
 
 def _replicate_owner_mode(path):
