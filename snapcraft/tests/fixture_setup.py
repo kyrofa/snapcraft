@@ -18,7 +18,10 @@ import collections
 import contextlib
 import copy
 import io
+import inspect
+import json
 import os
+import shutil
 import string
 import subprocess
 import sys
@@ -972,3 +975,185 @@ class SnapcraftYaml(fixtures.Fixture):
         with open(os.path.join(self.path, 'snapcraft.yaml'),
                   'w') as snapcraft_yaml_file:
             yaml.dump(self.data, snapcraft_yaml_file)
+
+
+class ObjectSpy(fixtures.Fixture):
+
+    def __init__(self, target, cls):
+        super().__init__()
+
+        self._target = target
+        self._cls = cls
+
+    def _setUp(self):
+        patcher = mock.patch(self._target, wraps=self._cls)
+        self.spy = patcher.start()
+        self.addCleanup(patcher.stop)
+
+        for member in inspect.getmembers(self._cls,
+                                         predicate=inspect.isfunction):
+            name = member[0]
+            value = member[1]
+
+            # Already wrapped __init__, skip it here
+            if name == '__init__':
+                continue
+
+            def _spy(wrapped_method):
+                spy = mock.MagicMock()
+
+                def _wrapper(self, *args, **kwargs):
+                    spy(*args, **kwargs)
+                    return wrapped_method(self, *args, **kwargs)
+                _wrapper.spy = spy
+                return _wrapper
+
+            spy = _spy(value)
+            patcher = mock.patch.object(self._cls, name, spy)
+            patcher.start()
+            setattr(self.spy, name, spy.spy)
+            self.addCleanup(patcher.stop)
+
+
+class FakePip(ObjectSpy):
+
+    def __init__(self):
+        super().__init__(
+            'snapcraft.plugins._python._pip.Pip',
+            snapcraft.plugins._python._pip.Pip)
+
+        self._original_run_output = snapcraft.internal.common.run_output
+        self._subcommand_dispatcher = {
+            'download': self._fake_download,
+            'install': self._fake_install,
+            'wheel': self._fake_wheel,
+            'list': self._fake_list,
+        }
+
+        self._download_dir_template = os.path.join('{base_dir}', 'downloaded')
+        self._install_dir_template = os.path.join('{base_dir}', 'installed')
+
+        self.fake_list_return = None
+
+    def _setUp(self):
+        super()._setUp()
+
+        patcher = mock.patch(
+            'snapcraft.internal.common.run_output',
+            side_effect=self._fake_run_output)
+        self.run_output = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _fake_run_output(self, *args, **kwargs):
+        try:
+            command = self._get_pip_command(args[0])
+            if command:
+                return self._subcommand_dispatcher[command[0]](
+                    command[1:], **kwargs)
+        except ValueError:
+            return self._original_run_output(*args, **kwargs)
+
+    def _get_pip_command(self, args):
+        with contextlib.suppress(IndexError):
+            if ('python' in args[0]) and (args[1:3] == ['-m', 'pip']):
+                return args[3:]
+
+        raise ValueError('not a pip command')
+
+    def _fake_download(self, args, **kwargs):
+        # We only care about the destination and package list here. Remove
+        # everything else.
+        flags = (
+            '--disable-pip-version-check', '--process-dependency-links', '.')
+        for flag in flags:
+            with contextlib.suppress(ValueError):
+                args.remove(flag)
+
+        index = args.index('--dest')
+        del args[index]
+        destination = args.pop(index)
+
+        useless_args = ('--requirement', '--constraint')
+        for arg in useless_args:
+            with contextlib.suppress(ValueError):
+                index = args.index(arg)
+                del args[index]
+                del args[index]
+
+        # Only package names should be left. Pretend they've been downloaded by
+        # creating a "downloaded" subdirectory and creating a file for each
+        # package containing its version.
+        download_dir = self._download_dir_template.format(
+            base_dir=destination)
+        for package in args:
+            version = '1.0'  # Pretend it's v1.0 unless given otherwise
+            with contextlib.suppress(ValueError):
+                package, version = package.split('==')
+
+            file_path = os.path.join(download_dir, package)
+            os.makedirs(download_dir, exist_ok=True)
+            with open(file_path, 'w') as f:
+                f.write(version)
+
+        return ''
+
+    def _fake_install(self, args, **kwargs):
+        # We only care about the find-links and package list here. Remove
+        # everything else.
+        flags = (
+            '--user', '--no-compile', '--no-index',
+            '--process-dependency-links', '--ignore-installed', '--no-deps',
+            '--upgrade', '.')
+        for flag in flags:
+            with contextlib.suppress(ValueError):
+                args.remove(flag)
+
+        index = args.index('--find-links')
+        del args[index]
+        links_dir = args.pop(index)
+
+        useless_args = ('--requirement', '--constraint')
+        for arg in useless_args:
+            with contextlib.suppress(ValueError):
+                # There can be multiple of these. Just keep removing until
+                # they're gone.
+                while True:
+                    index = args.index(arg)
+                    del args[index]
+                    del args[index]
+
+        # Only package names should be left. Assume they've been "downloaded",
+        # and pretend they've been "installed" by moving the downloaded files
+        # into a "installed" subdirectory of PYTHONUSERBASE.
+        download_dir = self._download_dir_template.format(
+            base_dir=links_dir)
+        install_dir = self._install_dir_template.format(
+            base_dir=kwargs['env']['PYTHONUSERBASE'])
+        for package in args:
+            with contextlib.suppress(ValueError):
+                package, version = package.split('==')
+
+            file_path = os.path.join(download_dir, package)
+            os.makedirs(install_dir, exist_ok=True)
+            shutil.copy(file_path, install_dir)
+        return ''
+
+    def _fake_wheel(self, args, **kwargs):
+        return ''
+
+    def _fake_list(self, args, **kwargs):
+        if self.fake_list_return:
+            return self.fake_list_return
+
+        # Return json string of package: version pairs for the packages that
+        # were installed in PYTHONUSERBASE
+        install_dir = self._install_dir_template.format(
+            base_dir=kwargs['env']['PYTHONUSERBASE'])
+        package_list = []
+        if os.path.exists(install_dir):
+            for package_file in os.listdir(install_dir):
+                package_info = {'name': package_file}
+                with open(os.path.join(install_dir, package_file)) as f:
+                    package_info['version'] = f.read()
+                package_list.append(package_info)
+        return json.dumps(package_list)

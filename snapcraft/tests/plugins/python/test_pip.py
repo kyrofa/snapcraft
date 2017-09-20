@@ -31,6 +31,7 @@ from snapcraft.plugins._python import (
     errors,
 )
 
+from snapcraft.tests import fixture_setup
 from . import PythonBaseTestCase
 
 
@@ -39,9 +40,8 @@ class PipRunTestCase(PythonBaseTestCase):
     def setUp(self):
         super().setUp()
 
-        patcher = mock.patch('snapcraft.internal.common.run_output')
-        self.mock_run_output = patcher.start()
-        self.addCleanup(patcher.stop)
+        self.fake = fixture_setup.FakePip()
+        self.useFixture(self.fake)
 
     def _assert_expected_enviroment(self, expected_python, headers_path):
         _pip.Pip(
@@ -81,7 +81,7 @@ class PipRunTestCase(PythonBaseTestCase):
 
                 return True
 
-        self.mock_run_output.assert_called_once_with(
+        self.fake.run_output.assert_called_once_with(
             [expected_python, '-m', 'pip'], env=check_env(self),
             stderr=subprocess.STDOUT)
 
@@ -164,7 +164,7 @@ class PipRunTestCase(PythonBaseTestCase):
 
                 return True
 
-        self.mock_run_output.assert_has_calls([
+        self.fake.run_output.assert_has_calls([
             mock.call([expected_python, '-m', 'pip'], env=check_env(self),
                       stderr=subprocess.STDOUT)])
 
@@ -189,7 +189,7 @@ class InitTestCase(PipRunTestCase):
             install_dir='install_dir',
             stage_dir='stage_dir')
 
-        self.mock_run_output.assert_called_once_with(
+        self.fake.run_output.assert_called_once_with(
             self.command, stderr=subprocess.STDOUT, env=mock.ANY)
 
     def test_init_without_pip_installed(self):
@@ -200,7 +200,7 @@ class InitTestCase(PipRunTestCase):
             if command == self.command:
                 raise subprocess.CalledProcessError(
                     1, 'foo', b'no module named pip')
-        self.mock_run_output.side_effect = fake_run
+        self.fake.run_output.side_effect = fake_run
 
         # Verify that pip is then installed
         _pip.Pip(
@@ -216,8 +216,8 @@ class InitTestCase(PipRunTestCase):
         # 1. That we test for the installed pip
         # 2. That we then download pip (and associated tools) using host pip
         # 3. That we then install pip (and associated tools) using host pip
-        self.assertThat(self.mock_run_output.mock_calls, HasLength(3))
-        self.mock_run_output.assert_has_calls([
+        self.assertThat(self.fake.run_output.mock_calls, HasLength(3))
+        self.fake.run_output.assert_has_calls([
             mock.call(
                 self.command, env=_CheckPythonhomeEnv(self, part_pythonhome),
                 stderr=subprocess.STDOUT),
@@ -236,7 +236,7 @@ class InitTestCase(PipRunTestCase):
         """Test that pip initialization doesn't eat legit errors"""
 
         # Raises an exception indicating something bad happened
-        self.mock_run_output.side_effect = subprocess.CalledProcessError(
+        self.fake.run_output.side_effect = subprocess.CalledProcessError(
             1, 'foo', b'no good, very bad')
 
         # Verify that pip lets that exception through
@@ -246,14 +246,10 @@ class InitTestCase(PipRunTestCase):
             install_dir='install_dir', stage_dir='stage_dir')
 
 
-class PipTestCase(PythonBaseTestCase):
+class PipTestCase(PipRunTestCase):
 
     def setUp(self):
         super().setUp()
-
-        patcher = mock.patch.object(_pip.Pip, '_run')
-        self.mock_run = patcher.start()
-        self.addCleanup(patcher.stop)
 
         self._create_python_binary('install_dir')
 
@@ -284,7 +280,7 @@ class PipCommandTestCase(PipTestCase):
             stage_dir='stage_dir')
 
         # We don't care about anything init did to the mock here: reset it
-        self.mock_run.reset_mock()
+        self.fake.run_output.reset_mock()
 
 
 class PipDownloadTestCase(PipCommandTestCase):
@@ -294,32 +290,32 @@ class PipDownloadTestCase(PipCommandTestCase):
             'packages': ['foo', 'bar'],
             'kwargs': {},
             'expected_args': ['foo', 'bar'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('setup_py_dir', {
             'packages': [],
             'kwargs': {'setup_py_dir': 'test_setup_py_dir'},
             'expected_args': ['.'],
-            'expected_kwargs': {'cwd': 'test_setup_py_dir'},
+            'expected_kwargs': {'cwd': 'test_setup_py_dir', 'env': mock.ANY},
         }),
         ('single constraint', {
             'packages': [],
             'kwargs': {'constraints': ['constraint']},
             'expected_args': ['--constraint', 'constraint'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('multiple constraints', {
             'packages': [],
             'kwargs': {'constraints': ['constraint1', 'constraint2']},
             'expected_args': [
                 '--constraint', 'constraint1', '--constraint', 'constraint2'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('single requirement', {
             'packages': [],
             'kwargs': {'requirements': ['requirement']},
             'expected_args': ['--requirement', 'requirement'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('multiple requirements', {
             'packages': [],
@@ -327,32 +323,33 @@ class PipDownloadTestCase(PipCommandTestCase):
             'expected_args': [
                 '--requirement', 'requirement1', '--requirement',
                 'requirement2'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('process dependency links', {
             'packages': [],
             'kwargs': {'process_dependency_links': True},
             'expected_args': ['--process-dependency-links'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('packages and setup_py_dir', {
             'packages': ['foo', 'bar'],
             'kwargs': {'setup_py_dir': 'test_setup_py_dir'},
             'expected_args': ['foo', 'bar', '.'],
-            'expected_kwargs': {'cwd': 'test_setup_py_dir'},
+            'expected_kwargs': {'cwd': 'test_setup_py_dir', 'env': mock.ANY},
         }),
     ]
 
     def _assert_mock_run_with(self, *args, **kwargs):
         common_args = [
-            'download', '--disable-pip-version-check', '--dest', mock.ANY]
+            'install_dir/usr/bin/pythontest', '-m', 'pip', 'download',
+            '--disable-pip-version-check', '--dest', mock.ANY]
         common_args.extend(*args)
-        self.mock_run.assert_called_once_with(
+        self.fake.run_output.assert_called_once_with(
             common_args, **kwargs)
 
     def test_without_packages_or_kwargs_should_noop(self):
         self.pip.download([])
-        self.mock_run.assert_not_called()
+        self.fake.run_output.assert_not_called()
 
     def test_with_packages_and_kwargs(self):
         self.pip.download(self.packages, **self.kwargs)
@@ -366,32 +363,32 @@ class PipInstallTestCase(PipCommandTestCase):
             'packages': ['foo', 'bar'],
             'kwargs': {},
             'expected_args': ['foo', 'bar'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('setup_py_dir', {
             'packages': [],
             'kwargs': {'setup_py_dir': 'test_setup_py_dir'},
             'expected_args': ['.'],
-            'expected_kwargs': {'cwd': 'test_setup_py_dir'},
+            'expected_kwargs': {'cwd': 'test_setup_py_dir', 'env': mock.ANY},
         }),
         ('single constraint', {
             'packages': [],
             'kwargs': {'constraints': ['constraint']},
             'expected_args': ['--constraint', 'constraint'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('multiple constraints', {
             'packages': [],
             'kwargs': {'constraints': ['constraint1', 'constraint2']},
             'expected_args': [
                 '--constraint', 'constraint1', '--constraint', 'constraint2'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('single requirement', {
             'packages': [],
             'kwargs': {'requirements': ['requirement']},
             'expected_args': ['--requirement', 'requirement'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('multiple requirements', {
             'packages': [],
@@ -399,53 +396,55 @@ class PipInstallTestCase(PipCommandTestCase):
             'expected_args': [
                 '--requirement', 'requirement1', '--requirement',
                 'requirement2'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('process dependency links', {
             'packages': [],
             'kwargs': {'process_dependency_links': True},
             'expected_args': ['--process-dependency-links'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('upgrade', {
             'packages': [],
             'kwargs': {'upgrade': True},
             'expected_args': ['--upgrade'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('install_deps', {
             'packages': [],
             'kwargs': {'install_deps': False},
             'expected_args': ['--no-deps'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('ignore_installed', {
             'packages': [],
             'kwargs': {'ignore_installed': True},
             'expected_args': ['--ignore-installed'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('packages and setup_py_dir', {
             'packages': ['foo', 'bar'],
             'kwargs': {'setup_py_dir': 'test_setup_py_dir'},
             'expected_args': ['foo', 'bar', '.'],
-            'expected_kwargs': {'cwd': 'test_setup_py_dir'},
+            'expected_kwargs': {'cwd': 'test_setup_py_dir', 'env': mock.ANY},
         }),
     ]
 
     def _assert_mock_run_with(self, *args, **kwargs):
         common_args = [
-            'install', '--user', '--no-compile', '--no-index', '--find-links',
-            mock.ANY]
+            'install_dir/usr/bin/pythontest', '-m', 'pip', 'install', '--user',
+            '--no-compile', '--no-index', '--find-links', mock.ANY]
         common_args.extend(*args)
-        self.mock_run.assert_called_once_with(
+        self.fake.run_output.assert_called_once_with(
             common_args, **kwargs)
 
     def test_without_packages_or_kwargs_should_noop(self):
         self.pip.install([])
-        self.mock_run.assert_not_called()
+        self.fake.run_output.assert_not_called()
 
     def test_with_packages_and_kwargs(self):
+        self.pip.download(self.packages)
+        self.fake.run_output.reset_mock()
         self.pip.install(self.packages, **self.kwargs)
         self._assert_mock_run_with(self.expected_args, **self.expected_kwargs)
 
@@ -457,32 +456,32 @@ class PipWheelTestCase(PipCommandTestCase):
             'packages': ['foo', 'bar'],
             'kwargs': {},
             'expected_args': ['foo', 'bar'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('setup_py_dir', {
             'packages': [],
             'kwargs': {'setup_py_dir': 'test_setup_py_dir'},
             'expected_args': ['.'],
-            'expected_kwargs': {'cwd': 'test_setup_py_dir'},
+            'expected_kwargs': {'cwd': 'test_setup_py_dir', 'env': mock.ANY},
         }),
         ('single constraint', {
             'packages': [],
             'kwargs': {'constraints': ['constraint']},
             'expected_args': ['--constraint', 'constraint'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('multiple constraints', {
             'packages': [],
             'kwargs': {'constraints': ['constraint1', 'constraint2']},
             'expected_args': [
                 '--constraint', 'constraint1', '--constraint', 'constraint2'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('single requirement', {
             'packages': [],
             'kwargs': {'requirements': ['requirement']},
             'expected_args': ['--requirement', 'requirement'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('multiple requirements', {
             'packages': [],
@@ -490,33 +489,33 @@ class PipWheelTestCase(PipCommandTestCase):
             'expected_args': [
                 '--requirement', 'requirement1', '--requirement',
                 'requirement2'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('process dependency links', {
             'packages': [],
             'kwargs': {'process_dependency_links': True},
             'expected_args': ['--process-dependency-links'],
-            'expected_kwargs': {'cwd': None},
+            'expected_kwargs': {'cwd': None, 'env': mock.ANY},
         }),
         ('packages and setup_py_dir', {
             'packages': ['foo', 'bar'],
             'kwargs': {'setup_py_dir': 'test_setup_py_dir'},
             'expected_args': ['foo', 'bar', '.'],
-            'expected_kwargs': {'cwd': 'test_setup_py_dir'},
+            'expected_kwargs': {'cwd': 'test_setup_py_dir', 'env': mock.ANY},
         }),
     ]
 
     def _assert_mock_run_with(self, *args, **kwargs):
         common_args = [
-            'wheel', '--no-index', '--find-links', mock.ANY, '--wheel-dir',
-            mock.ANY]
+            'install_dir/usr/bin/pythontest', '-m', 'pip', 'wheel',
+            '--no-index', '--find-links', mock.ANY, '--wheel-dir', mock.ANY]
         common_args.extend(*args)
-        self.mock_run.assert_called_once_with(
+        self.fake.run_output.assert_called_once_with(
             common_args, **kwargs)
 
     def test_without_packages_or_kwargs_should_noop(self):
         self.pip.wheel([])
-        self.mock_run.assert_not_called()
+        self.fake.run_output.assert_not_called()
 
     def test_with_packages_and_kwargs(self):
         self.pip.wheel(self.packages, **self.kwargs)
@@ -526,31 +525,40 @@ class PipWheelTestCase(PipCommandTestCase):
 class PipListTestCase(PipCommandTestCase):
 
     def test_none(self):
-        self.mock_run.return_value = '{}'
         self.assertFalse(self.pip.list())
-        self.mock_run.assert_called_once_with(['list', '--format=json'])
+        self.fake.run_output.assert_called_once_with([
+            'install_dir/usr/bin/pythontest', '-m', 'pip', 'list',
+            '--format=json'], env=mock.ANY)
 
     def test_package(self):
-        self.mock_run.return_value = '[{"name": "foo", "version": "1.0"}]'
+        # First, download something and install it
+        self.pip.download(['foo==1.0'])
+        self.pip.install(['foo==1.0'])
+
+        self.fake.run_output.reset_mock()
+
+        # Now verify that list works as expected
         self.assertThat(self.pip.list(), Equals({'foo': '1.0'}))
-        self.mock_run.assert_called_once_with(['list', '--format=json'])
+        self.fake.run_output.assert_called_once_with([
+            'install_dir/usr/bin/pythontest', '-m', 'pip', 'list',
+            '--format=json'], env=mock.ANY)
 
     def test_missing_name(self):
-        self.mock_run.return_value = '[{"version": "1.0"}]'
+        self.fake.fake_list_return = '[{"version": "1.0"}]'
         raised = self.assertRaises(
             errors.PipListMissingFieldError, self.pip.list)
         self.assertThat(
             str(raised), Contains("Pip packages json missing 'name' field"))
 
     def test_missing_version(self):
-        self.mock_run.return_value = '[{"name": "foo"}]'
+        self.fake.fake_list_return = '[{"name": "foo"}]'
         raised = self.assertRaises(
             errors.PipListMissingFieldError, self.pip.list)
         self.assertThat(
             str(raised), Contains("Pip packages json missing 'version' field"))
 
     def test_invalid_json(self):
-        self.mock_run.return_value = '[{]'
+        self.fake.fake_list_return = '[{]'
         raised = self.assertRaises(
             errors.PipListInvalidJsonError, self.pip.list)
         self.assertThat(
