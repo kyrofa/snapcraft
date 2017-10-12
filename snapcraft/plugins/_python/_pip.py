@@ -153,7 +153,7 @@ class Pip:
         # Check to see if we have our own pip. If not, we need to use the pip
         # on the host (installed via build-packages) to grab our own.
         if not self._is_pip_installed():
-            logger.info('Fetching pip...')
+            logger.info('Fetching and installing pip...')
 
             real_python_home = self._python_home
 
@@ -172,13 +172,13 @@ class Pip:
 
     def _ensure_wheel_installed(self):
         if not self._is_wheel_installed():
-            logger.info('Fetching wheel...')
+            logger.info('Fetching and installing wheel...')
             self.download({'wheel'})
             self.install({'wheel'}, ignore_installed=True)
 
     def _ensure_setuptools_installed(self):
         if not self._is_setuptools_installed():
-            logger.info('Fetching setuptools...')
+            logger.info('Fetching and installing setuptools...')
             self.download({'setuptools'})
             self.install({'setuptools'}, ignore_installed=True)
 
