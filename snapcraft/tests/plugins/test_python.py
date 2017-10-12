@@ -309,13 +309,6 @@ class PythonPluginTestCase(BasePythonPluginTestCase):
             process_dependency_links=True, requirements=None,
             setup_py_dir=plugin.sourcedir)
 
-    @mock.patch.object(os, 'stat')
-    @mock.patch.object(os.path, 'exists', return_value=False)
-    def test_replicate_owner_mode_missing_path(self, mock_path_exists,
-                                               mock_os_stat):
-        python._replicate_owner_mode('/nonexistant_path')
-        self.assertFalse(mock_os_stat.called)
-
     def test_get_manifest_with_python_packages(self):
         packages = collections.OrderedDict()
         packages['testpackage1'] = '1.0'

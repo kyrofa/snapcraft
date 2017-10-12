@@ -56,7 +56,6 @@ import collections
 import contextlib
 import os
 import re
-import stat
 from shutil import which
 import subprocess
 from textwrap import dedent
@@ -186,7 +185,7 @@ class PythonPlugin(snapcraft.BasePlugin):
         with simple_env_bzr(os.path.join(self.installdir, 'bin')):
             # Download this project, using its setup.py if present. This will
             # also download any python-packages requested.
-            self._download_from_setup_py()
+            self._download_project()
 
     def clean_pull(self):
         super().clean_pull()
@@ -197,7 +196,7 @@ class PythonPlugin(snapcraft.BasePlugin):
 
         with simple_env_bzr(os.path.join(self.installdir, 'bin')):
             # Install the packages that have already been downloaded
-            installed_pipy_packages = self._install_from_setup_py()
+            installed_pipy_packages = self._install_project()
 
         # We record the requirements and constraints files only if they are
         # remote. If they are local, they are already tracked with the source.
@@ -260,7 +259,7 @@ class PythonPlugin(snapcraft.BasePlugin):
             install_deps=False,
             process_dependency_links=self.options.process_dependency_links)
 
-    def _download_from_setup_py(self):
+    def _download_project(self):
         setup_py_dir = self._get_setup_py_dir()
         constraints = self._get_constraints()
         requirements = self._get_requirements()
@@ -270,7 +269,7 @@ class PythonPlugin(snapcraft.BasePlugin):
             constraints=constraints, requirements=requirements,
             process_dependency_links=self.options.process_dependency_links)
 
-    def _install_from_setup_py(self):
+    def _install_project(self):
         setup_py_dir = self._get_setup_py_dir()
         constraints = self._get_constraints()
         requirements = self._get_requirements()
@@ -332,19 +331,6 @@ class PythonPlugin(snapcraft.BasePlugin):
         # the python plugin.
         fileset.append('-lib/python*/site-packages/*/RECORD')
         return fileset
-
-
-def _replicate_owner_mode(path):
-    if not os.path.exists(path):
-        return
-
-    file_mode = os.stat(path).st_mode
-    new_mode = file_mode & stat.S_IWUSR
-    if file_mode & stat.S_IXUSR:
-        new_mode |= stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-    if file_mode & stat.S_IRUSR:
-        new_mode |= stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH
-    os.chmod(path, new_mode)
 
 
 @contextlib.contextmanager

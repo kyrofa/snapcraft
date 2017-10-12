@@ -603,6 +603,18 @@ class PipInstallFixupPermissionsTestCase(PipCommandTestCase):
             oct(os.stat(self.file_path).st_mode)[-3:],
             Equals(self.expected_mode))
 
+    @mock.patch.object(os, 'stat')
+    @mock.patch.object(os.path, 'exists', return_value=False)
+    def test_missing_path(self, mock_path_exists, mock_os_stat):
+        _pip._replicate_owner_mode('/nonexistant_path')
+        self.assertFalse(mock_os_stat.called)
+
+    @mock.patch.object(os, 'chmod')
+    def test_symlink(self, mock_chmod):
+        os.symlink(self.file_path, 'link')
+        _pip._replicate_owner_mode('link')
+        self.assertFalse(mock_chmod.called)
+
 
 class PipWheelTestCase(PipCommandTestCase):
 
