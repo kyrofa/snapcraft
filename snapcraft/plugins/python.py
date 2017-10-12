@@ -57,7 +57,6 @@ import contextlib
 import os
 import re
 import stat
-from contextlib import contextmanager
 from shutil import which
 import subprocess
 from textwrap import dedent
@@ -348,7 +347,7 @@ def _replicate_owner_mode(path):
     os.chmod(path, new_mode)
 
 
-@contextmanager
+@contextlib.contextmanager
 def simple_env_bzr(bin_dir):
     """Create an appropriate environment to run bzr.
 
