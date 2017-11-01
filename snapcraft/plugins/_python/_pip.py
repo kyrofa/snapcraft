@@ -332,7 +332,7 @@ class Pip:
             cwd = setup_py_dir
 
         if not args:
-            return  # No operation was requested
+            return []  # No operation was requested
 
         wheels = []
         with tempfile.TemporaryDirectory() as temp_dir:

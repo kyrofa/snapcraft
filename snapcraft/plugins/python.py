@@ -63,6 +63,7 @@ from textwrap import dedent
 import requests
 
 import snapcraft
+from snapcraft import file_utils
 from snapcraft.common import isurl
 from snapcraft.plugins import _python
 
@@ -255,8 +256,7 @@ class PythonPlugin(snapcraft.BasePlugin):
         # stage-packages
         need_install = [k for k in wheel_names if k not in installed]
         self._pip.install(
-            need_install + self.options.python_packages, upgrade=True,
-            install_deps=False,
+            need_install, upgrade=True, install_deps=False,
             process_dependency_links=self.options.process_dependency_links)
 
     def _download_project(self):
@@ -305,6 +305,12 @@ class PythonPlugin(snapcraft.BasePlugin):
         self.run(
             command, env=self._pip.env(),
             cwd=os.path.dirname(setup_file))
+
+        # Fix all shebangs to use the in-snap python. The stuff installed from
+        # pip has already been fixed, but anything done in this step has not.
+        file_utils.replace_in_file(self._install_dir, re.compile(r''),
+                                   re.compile(r'^#!.*python'),
+                                   r'#!/usr/bin/env python')
 
     def _get_file_contents(self, path):
         if isurl(path):
