@@ -308,7 +308,7 @@ class PythonPlugin(snapcraft.BasePlugin):
 
         # Fix all shebangs to use the in-snap python. The stuff installed from
         # pip has already been fixed, but anything done in this step has not.
-        file_utils.replace_in_file(self._install_dir, re.compile(r''),
+        file_utils.replace_in_file(self.installdir, re.compile(r''),
                                    re.compile(r'^#!.*python'),
                                    r'#!/usr/bin/env python')
 
