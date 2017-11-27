@@ -116,19 +116,28 @@ def _check_dev_agreement_and_namespace_statuses(store):
             raise
 
 
-def _login(store, packages=None, acls=None, channels=None, save=True):
-    print('Enter your Ubuntu One e-mail address and password.\n'
-          'If you do not have an Ubuntu One account, you can create one at '
-          'https://dashboard.snapcraft.io/openid/login')
-    email = input('Email: ')
-    password = getpass.getpass('Password: ')
+def login(*, store=None, packages=None, acls=None, channels=None, save=True,
+          config_fd=None):
+    if not store:
+        store = storeapi.StoreClient()
+
+    email = None
+    password = None
+
+    if not config_fd:
+        print('Enter your Ubuntu One e-mail address and password.\n'
+              'If you do not have an Ubuntu One account, you can create one '
+              'at https://dashboard.snapcraft.io/openid/login')
+        email = input('Email: ')
+        password = getpass.getpass('Password: ')
 
     try:
         try:
             store.login(email, password, packages=packages, acls=acls,
-                        channels=channels, save=save)
-            print()
-            logger.info(storeapi.constants.TWO_FACTOR_WARNING)
+                        channels=channels, save=save, config_fd=config_fd)
+            if not config_fd:
+                print()
+                logger.info(storeapi.constants.TWO_FACTOR_WARNING)
         except storeapi.errors.StoreTwoFactorAuthenticationRequired:
             one_time_password = input('Second-factor auth: ')
             store.login(
@@ -148,14 +157,7 @@ def _login(store, packages=None, acls=None, channels=None, save=True):
     except storeapi.errors.NeedTermsSignedError as e:
         return _fail_login(e.message)
     else:
-        print()
-        echo.info('Login successful.')
         return True
-
-
-def login():
-    store = storeapi.StoreClient()
-    return _login(store)
 
 
 @contextmanager
@@ -293,7 +295,7 @@ def register_key(name):
         raise storeapi.errors.MissingSnapdError('register-key')
     key = _maybe_prompt_for_key(name)
     store = storeapi.StoreClient()
-    if not _login(store, acls=['modify_account_key'], save=False):
+    if not login(store=store, acls=['modify_account_key'], save=False):
         raise storeapi.errors.LoginRequiredError()
     logger.info('Registering key ...')
     account_info = store.get_account_information()

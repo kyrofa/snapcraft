@@ -228,15 +228,53 @@ def list_registered():
     snapcraft.list_registered()
 
 
+@storecli.command('get-token')
+@click.argument('token_fd', metavar='FILE', type=click.File('w'))
+@click.option('--packages', metavar='<packages>',
+              help='Comma-separated list of packages to limit token access')
+@click.option('--channels', metavar='<channels>',
+              help='Comma-separated list of channels to limit token access')
+def get_token(token_fd: str, packages: str, channels: str):
+    """Save attenuated token for a store account in FILE.
+
+    This token can then be used to login to the given account with the
+    permissions specified.
+
+    For example, to limit acces to the edge channel of any snap to which the
+    account has access:
+
+        snapcraft get-token --channels=edge
+
+    Or to limit access to only the edge channel of a single snap:
+
+        snapcraft get-token --packages=my-snap --channels=edge
+    """
+
+    store = storeapi.StoreClient()
+    if not snapcraft.login(store=store,
+                           packages=None,
+                           channels=None,
+                           save=False):
+        sys.exit(1)
+
+    store.conf.parser.write(token_fd)
+
+    echo.info('\nToken successfully saved.')
+
+
 @storecli.command()
-def login():
+@click.option('--token', 'token_fd', metavar='<token>', type=click.File('r'),
+              help="Path to token created with 'snapcraft get-token'")
+def login(token_fd):
     """Login with your Ubuntu One e-mail address and password.
 
     If you do not have an Ubuntu One account, you can create one at
     https://dashboard.snapcraft.io/openid/login
     """
-    if not snapcraft.login():
+    if not snapcraft.login(config_fd=token_fd):
         sys.exit(1)
+
+    echo.info('\nLogin successful.')
 
 
 @storecli.command()

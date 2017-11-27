@@ -39,7 +39,6 @@ class Config(object):
 
     def __init__(self):
         self.parser = configparser.ConfigParser()
-        self.filename = None
         self.load()
 
     def _section_name(self):
@@ -70,22 +69,29 @@ class Config(object):
                 return False
         return True
 
-    def load(self):
-        # Local configurations (per project) are supposed to be static.
-        # That's why it's only checked for 'loading' and never written to.
-        # Essentially, all authentication-related changes, like login/logout
-        # or macaroon-refresh, will not be persisted for the next runs.
-        if os.path.exists(LOCAL_CONFIG_FILENAME):
-            self.parser.read(LOCAL_CONFIG_FILENAME)
-            logger.warn(
-                'Using local configuration (`{}`), changes will '
-                'not be persisted.'.format(LOCAL_CONFIG_FILENAME))
-            return
+    def load(self, *, config_fd=None):
+        if config_fd:
+            self.parser.read_file(config_fd)
+        else:
+            # Local configurations (per project) are supposed to be static.
+            # That's why it's only checked for 'loading' and never written to.
+            # Essentially, all authentication-related changes, like
+            # login/logout or macaroon-refresh, will not be persisted for the
+            # next runs.
+            if os.path.exists(LOCAL_CONFIG_FILENAME):
+                config_file = LOCAL_CONFIG_FILENAME
 
-        self.filename = BaseDirectory.load_first_config(
-            'snapcraft', 'snapcraft.cfg')
-        if self.filename and os.path.exists(self.filename):
-            self.parser.read(self.filename)
+                # FIXME: We don't know this for sure when loading. Need a
+                # better separation of concerns.
+                logger.warn(
+                    'Using local configuration ({!r}), changes will '
+                    'not be persisted.'.format(LOCAL_CONFIG_FILENAME))
+            else:
+                config_file = BaseDirectory.load_first_config(
+                    'snapcraft', 'snapcraft.cfg')
+
+            if config_file and os.path.exists(config_file):
+                self.parser.read(config_file)
 
     @staticmethod
     def save_path():
@@ -93,8 +99,7 @@ class Config(object):
                             'snapcraft.cfg')
 
     def save(self):
-        self.filename = self.save_path()
-        with open(self.filename, 'w') as f:
+        with open(self.save_path(), 'w') as f:
             self.parser.write(f)
 
     def clear(self):

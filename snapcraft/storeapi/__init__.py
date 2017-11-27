@@ -144,20 +144,25 @@ class StoreClient():
         self.sca = SCAClient(self.conf)
 
     def login(self, email, password, one_time_password=None, acls=None,
-              packages=None, channels=None, save=True):
+              packages=None, channels=None, save=True, config_fd=None):
         """Log in via the Ubuntu One SSO API."""
         if acls is None:
             acls = ['package_upload', 'package_access', 'package_manage']
-        # Ask the store for the needed capabilities to be associated with the
-        # macaroon.
-        macaroon = self.sca.get_macaroon(acls, packages, channels)
-        caveat_id = self._extract_caveat_id(macaroon)
-        unbound_discharge = self.sso.get_unbound_discharge(
-            email, password, one_time_password, caveat_id)
-        # The macaroon has been discharged, save it in the config
-        self.conf.set('macaroon', macaroon)
-        self.conf.set('unbound_discharge', unbound_discharge)
-        self.conf.set('email', email)
+
+        if config_fd:
+            self.conf.load(config_fd=config_fd)
+        else:
+            # Ask the store for the needed capabilities to be associated with
+            # the macaroon.
+            macaroon = self.sca.get_macaroon(acls, packages, channels)
+            caveat_id = self._extract_caveat_id(macaroon)
+            unbound_discharge = self.sso.get_unbound_discharge(
+                email, password, one_time_password, caveat_id)
+            # The macaroon has been discharged, save it in the config
+            self.conf.set('macaroon', macaroon)
+            self.conf.set('unbound_discharge', unbound_discharge)
+            self.conf.set('email', email)
+
         if save:
             self.conf.save()
 
