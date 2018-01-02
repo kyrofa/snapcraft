@@ -5,7 +5,7 @@ from std_msgs.msg import String
 class ListenerNode:
 
     def __init__(self, node_name):
-        self._node = rclpy.Node(node_name)
+        self._node = rclpy.create_node(node_name)
         self._node.create_subscription(String, 'chatter', self.callback)
 
     def callback(self, message):

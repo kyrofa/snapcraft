@@ -36,7 +36,7 @@ class AmentPluginTestCase(unit.TestCase):
         super().setUp()
 
         class props:
-            version = 'release-beta3'
+            version = 'release-ardent'
 
         self.properties = props()
         self.project = snapcraft.ProjectOptions()
@@ -62,7 +62,7 @@ class AmentPluginTestCase(unit.TestCase):
         for prop in expected:
             self.assertThat(rosdistro, Contains(prop))
         self.assertThat(rosdistro['type'], Equals('string'))
-        self.assertThat(rosdistro['default'], Equals('release-beta3'))
+        self.assertThat(rosdistro['default'], Equals('release-ardent'))
 
     def test_pull_properties(self):
         expected_pull_properties = ['version']

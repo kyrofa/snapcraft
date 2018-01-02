@@ -25,7 +25,7 @@ Additionally, this plugin uses the following plugin-specific keywords:
     - version:
       (string)
       The ROS2 version required by this system. This relates to the ros2 tags.
-      Defaults to 'release-beta3'.
+      Defaults to 'release-ardent'.
 """
 
 import logging
@@ -69,7 +69,7 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
 
         schema['properties']['version'] = {
             'type': 'string',
-            'default': 'release-beta3'
+            'default': 'release-ardent'
         }
 
         return schema

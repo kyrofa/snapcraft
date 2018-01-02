@@ -73,7 +73,12 @@ class Bootstrapper:
             'cmake', 'libopencv-dev', 'libpoco-dev', 'libpocofoundation9v5',
             'libpocofoundation9v5-dbg', 'python3-dev', 'python3-empy',
             'python3-nose', 'python3-pip', 'python3-setuptools',
-            'python3-yaml', 'libtinyxml-dev', 'libeigen3-dev'
+            'python3-yaml', 'libtinyxml-dev', 'libeigen3-dev',
+
+            # Dependencies for rviz
+            'libcurl4-openssl-dev', 'libqt5core5a', 'libqt5gui5',
+            'libqt5opengl5', 'libqt5widgets5', 'libxaw7-dev',
+            'libgles2-mesa-dev', 'libglu1-mesa-dev', 'qtbase5-dev'
         ]
 
     def get_stage_packages(self):
