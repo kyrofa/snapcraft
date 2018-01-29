@@ -94,8 +94,7 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         """
         super().__init__(name, options, project)
 
-        # FIXME: Remove this warning once the plugin (and indeed ROS2) is
-        # considered stable
+        # FIXME: Remove this warning once the plugin is considered stable
         logger.warn('The ament plugin is currently in beta, its API may '
                     'break. Use at your own risk')
 

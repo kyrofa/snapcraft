@@ -31,10 +31,39 @@ _ROS2_URL_TEMPLATE = (
     'https://raw.githubusercontent.com/ros2/ros2/{version}/ros2.repos'
 )
 
-
 _INSTALL_TOOLS_STEP = 'install-tools'
 _FETCH_ROS2_STEP = 'fetch-ros2'
 _BUILD_ROS2_STEP = 'build-ros2'
+
+_DEFAULT_BUILD_PACKAGES = [
+    # Dependencies for FastRTPS
+    'libasio-dev', 'libtinyxml2-dev',
+
+    # Dependencies for the rest of ros2
+    'cmake', 'libopencv-dev', 'libpoco-dev', 'libpocofoundation9v5',
+    'libpocofoundation9v5-dbg', 'python3-dev', 'python3-empy',
+    'python3-nose', 'python3-pip', 'python3-setuptools',
+    'python3-yaml', 'libtinyxml-dev', 'libeigen3-dev'
+]
+
+_BUILD_PACKAGES = {
+    'release-beta3': _DEFAULT_BUILD_PACKAGES,
+    'release-ardent': [
+        # Dependencies for FastRTPS
+        'libasio-dev', 'libtinyxml2-dev',
+
+        # Dependencies for the rest of ros2
+        'cmake', 'libopencv-dev', 'python3-dev', 'python3-empy',
+        'python3-nose', 'python3-pip', 'python3-pyparsing',
+        'python3-setuptools', 'python3-yaml', 'libtinyxml-dev',
+        'libeigen3-dev',
+
+        # Dependencies for rviz
+        'libcurl4-openssl-dev', 'libqt5core5a', 'libqt5gui5',
+        'libqt5opengl5', 'libqt5widgets5', 'libxaw7-dev',
+        'libgles2-mesa-dev', 'libglu1-mesa-dev', 'qtbase5-dev'
+    ]
+}
 
 
 class Bootstrapper:
@@ -65,21 +94,7 @@ class Bootstrapper:
     def get_build_packages(self):
         """Return the packages required for building the underlay."""
 
-        return [
-            # Dependencies for FastRTPS
-            'libasio-dev', 'libtinyxml2-dev',
-
-            # Dependencies for the rest of ros2
-            'cmake', 'libopencv-dev', 'libpoco-dev', 'libpocofoundation9v5',
-            'libpocofoundation9v5-dbg', 'python3-dev', 'python3-empy',
-            'python3-nose', 'python3-pip', 'python3-setuptools',
-            'python3-yaml', 'libtinyxml-dev', 'libeigen3-dev',
-
-            # Dependencies for rviz
-            'libcurl4-openssl-dev', 'libqt5core5a', 'libqt5gui5',
-            'libqt5opengl5', 'libqt5widgets5', 'libxaw7-dev',
-            'libgles2-mesa-dev', 'libglu1-mesa-dev', 'qtbase5-dev'
-        ]
+        return _BUILD_PACKAGES.get(self._version, _DEFAULT_BUILD_PACKAGES)
 
     def get_stage_packages(self):
         """Return the packages required for running the underlay."""
@@ -128,10 +143,18 @@ class Bootstrapper:
 
     def _run(self, command):
         env = os.environ.copy()
+        dist_packages_path = os.path.join(
+            'usr', 'lib', 'python3', 'dist-packages')
+
         env['PATH'] = env['PATH'] + ':' + os.path.join(
             self._tool_dir, 'usr', 'bin')
-        env['PYTHONPATH'] = os.path.join(
-            self._tool_dir, 'usr', 'lib', 'python3', 'dist-packages')
+
+        # Use both the host's python as well as the tools. These are separate
+        # because we don't want to install packages from the ROS archive on the
+        # host.
+        env['PYTHONPATH'] = '{}:{}'.format(
+            os.path.join(os.path.sep, dist_packages_path),
+            os.path.join(self._tool_dir, dist_packages_path))
 
         subprocess.check_call(command, env=env)
 
