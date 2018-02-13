@@ -25,8 +25,6 @@ from snapcraft import (
     sources,
 )
 
-from .vcs import Vcs
-
 logger = logging.getLogger(__name__)
 
 _ROS2_URL_TEMPLATE = (
@@ -86,16 +84,12 @@ class Bootstrapper:
         self._project = project
 
         self._bootstrap_path = bootstrap_path
+        self._tool_dir = os.path.join(self._bootstrap_path, 'tools')
         self._state_dir = os.path.join(self._bootstrap_path, 'state')
         self._underlay_dir = os.path.join(self._bootstrap_path, 'underlay')
         self._install_dir = os.path.join(self._bootstrap_path, 'install')
         self._build_dir = os.path.join(self._bootstrap_path, 'build')
         self._source_dir = os.path.join(self._underlay_dir, 'src')
-
-        self._vcs = Vcs(
-            work_dir=os.path.join(self._bootstrap_path, 'vcs'),
-            ubuntu_sources=ubuntu_sources,
-            project=project)
 
     def get_build_packages(self):
         """Return the packages required for building the underlay."""
@@ -147,6 +141,23 @@ class Bootstrapper:
         with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(self._bootstrap_path)
 
+    def _run(self, command):
+        env = os.environ.copy()
+        dist_packages_path = os.path.join(
+            'usr', 'lib', 'python3', 'dist-packages')
+
+        env['PATH'] = env['PATH'] + ':' + os.path.join(
+            self._tool_dir, 'usr', 'bin')
+
+        # Use both the host's python as well as the tools. These are separate
+        # because we don't want to install packages from the ROS archive on the
+        # host.
+        env['PYTHONPATH'] = '{}:{}'.format(
+            os.path.join(os.path.sep, dist_packages_path),
+            os.path.join(self._tool_dir, dist_packages_path))
+
+        subprocess.check_call(command, env=env)
+
     def _is_step_done(self, step):
         return os.path.isfile(os.path.join(self._state_dir, step))
 
@@ -163,7 +174,16 @@ class Bootstrapper:
             self._set_step_done(step)
 
     def _install_tools(self):
-        self._vcs.setup()
+        logger.info('Preparing to fetch vcstool...')
+        ubuntu = repo.Ubuntu(
+            self._bootstrap_path, sources=self._ubuntu_sources,
+            project_options=self._project)
+
+        logger.info('Fetching vcstool...')
+        ubuntu.get(['python3-vcstool'])
+
+        logger.info('Installing vcstool...')
+        ubuntu.unpack(self._tool_dir)
 
     def _fetch_ros2(self):
         os.makedirs(self._source_dir, exist_ok=True)
@@ -173,13 +193,14 @@ class Bootstrapper:
 
         logger.info('Fetching ros2 sources....')
         ros2_repos = os.path.join(self._underlay_dir, 'ros2.repos')
-        self._vcs.import_repositories(ros2_repos, self._source_dir)
+        self._run(
+            ['vcs', 'import', '--input', ros2_repos, self._source_dir])
 
     def _build_ros2(self):
         logger.info('Building ros2 underlay...')
         ament_path = os.path.join(
             self._source_dir, 'ament', 'ament_tools', 'scripts',
             'ament.py')
-        subprocess.check_call(
+        self._run(
             [ament_path, 'build', self._source_dir, '--build-space',
              self._build_dir, '--install-space', self._install_dir])
