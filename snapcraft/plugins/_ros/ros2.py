@@ -31,7 +31,7 @@ _ROS2_URL_TEMPLATE = (
     'https://raw.githubusercontent.com/ros2/ros2/{version}/ros2.repos'
 )
 
-_INSTALL_TOOLS_STEP = 'install-tools'
+_INSTALL_DEPENDENCIES_STEP = 'install-dependencies'
 _FETCH_ROS2_STEP = 'fetch-ros2'
 _BUILD_ROS2_STEP = 'build-ros2'
 
@@ -41,9 +41,8 @@ _DEFAULT_BUILD_PACKAGES = [
 
     # Dependencies for the rest of ros2
     'cmake', 'libopencv-dev', 'libpoco-dev', 'libpocofoundation9v5',
-    'libpocofoundation9v5-dbg', 'python3-dev', 'python3-empy',
-    'python3-nose', 'python3-pip', 'python3-setuptools',
-    'python3-yaml', 'libtinyxml-dev', 'libeigen3-dev'
+    'libpocofoundation9v5-dbg', 'python3-dev', 'libtinyxml-dev',
+    'libeigen3-dev',
 ]
 
 _BUILD_PACKAGES = {
@@ -53,15 +52,26 @@ _BUILD_PACKAGES = {
         'libasio-dev', 'libtinyxml2-dev',
 
         # Dependencies for the rest of ros2
-        'cmake', 'libopencv-dev', 'python3-dev', 'python3-empy',
-        'python3-nose', 'python3-pip', 'python3-pyparsing',
-        'python3-setuptools', 'python3-yaml', 'libtinyxml-dev',
+        'cmake', 'libopencv-dev', 'python3-dev', 'libtinyxml-dev',
         'libeigen3-dev',
 
         # Dependencies for rviz
         'libcurl4-openssl-dev', 'libqt5core5a', 'libqt5gui5',
         'libqt5opengl5', 'libqt5widgets5', 'libxaw7-dev',
-        'libgles2-mesa-dev', 'libglu1-mesa-dev', 'qtbase5-dev'
+        'libgles2-mesa-dev', 'libglu1-mesa-dev', 'qtbase5-dev',
+    ]
+}
+
+_DEFAULT_PYTHON_DEPENDENCIES = [
+    'python3-empy', 'python3-nose', 'python3-pip', 'python3-setuptools',
+    'python3-yaml',
+]
+
+_PYTHON_DEPENDENCIES = {
+    'release-beta3': _DEFAULT_PYTHON_DEPENDENCIES,
+    'release-ardent': [
+        'python3-empy', 'python3-nose', 'python3-pip', 'python3-pyparsing',
+        'python3-setuptools', 'python3-yaml',
     ]
 }
 
@@ -84,7 +94,8 @@ class Bootstrapper:
         self._project = project
 
         self._bootstrap_path = bootstrap_path
-        self._tool_dir = os.path.join(self._bootstrap_path, 'tools')
+        self._dependencies_dir = os.path.join(
+            self._bootstrap_path, 'dependencies')
         self._state_dir = os.path.join(self._bootstrap_path, 'state')
         self._underlay_dir = os.path.join(self._bootstrap_path, 'underlay')
         self._install_dir = os.path.join(self._bootstrap_path, 'install')
@@ -110,9 +121,9 @@ class Bootstrapper:
         even if subsequent steps fail.
         """
         self._run_step(
-            self._install_tools,
-            step=_INSTALL_TOOLS_STEP,
-            skip_message='Tools already installed. Skipping...')
+            self._install_dependencies,
+            step=_INSTALL_DEPENDENCIES_STEP,
+            skip_message='Dependencies already installed. Skipping...')
         self._run_step(
             self._fetch_ros2,
             step=_FETCH_ROS2_STEP,
@@ -141,22 +152,19 @@ class Bootstrapper:
         with contextlib.suppress(FileNotFoundError):
             shutil.rmtree(self._bootstrap_path)
 
-    def _run(self, command):
+    def env(self):
         env = os.environ.copy()
-        dist_packages_path = os.path.join(
-            'usr', 'lib', 'python3', 'dist-packages')
 
         env['PATH'] = env['PATH'] + ':' + os.path.join(
-            self._tool_dir, 'usr', 'bin')
+            self._dependencies_dir, 'usr', 'bin')
+        env['PYTHONPATH'] = os.path.join(
+            self._dependencies_dir, os.path.join(
+                'usr', 'lib', 'python3', 'dist-packages'))
 
-        # Use both the host's python as well as the tools. These are separate
-        # because we don't want to install packages from the ROS archive on the
-        # host.
-        env['PYTHONPATH'] = '{}:{}'.format(
-            os.path.join(os.path.sep, dist_packages_path),
-            os.path.join(self._tool_dir, dist_packages_path))
+        return env
 
-        subprocess.check_call(command, env=env)
+    def _run(self, command):
+        subprocess.check_call(command, env=self.env())
 
     def _is_step_done(self, step):
         return os.path.isfile(os.path.join(self._state_dir, step))
@@ -173,17 +181,18 @@ class Bootstrapper:
             callable()
             self._set_step_done(step)
 
-    def _install_tools(self):
-        logger.info('Preparing to fetch vcstool...')
+    def _install_dependencies(self):
+        logger.info('Preparing to fetch dependencies...')
         ubuntu = repo.Ubuntu(
             self._bootstrap_path, sources=self._ubuntu_sources,
             project_options=self._project)
 
-        logger.info('Fetching vcstool...')
-        ubuntu.get(['python3-vcstool'])
+        logger.info('Fetching dependencies...')
+        ubuntu.get(['python3-vcstool'] + _PYTHON_DEPENDENCIES.get(
+            self._version, _DEFAULT_PYTHON_DEPENDENCIES))
 
-        logger.info('Installing vcstool...')
-        ubuntu.unpack(self._tool_dir)
+        logger.info('Installing dependencies...')
+        ubuntu.unpack(self._dependencies_dir)
 
     def _fetch_ros2(self):
         os.makedirs(self._source_dir, exist_ok=True)

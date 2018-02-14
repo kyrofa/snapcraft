@@ -134,6 +134,8 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
 
         self._prepare_build()
 
+        self.run(['env'], env=self._build_env())
+
         self.run([
             'ament', 'build', self.sourcedir, '--build-space', self.builddir,
             '--install-space', self.installdir, '--cmake-args',
@@ -182,8 +184,8 @@ deb http://${{security}}.ubuntu.com/${{suffix}} {0}-security main universe
         return env
 
     def _build_env(self):
-        env = os.environ.copy()
-        env['PYTHONPATH'] = os.path.join(
+        env = self._bootstrapper.env()
+        env['PYTHONPATH'] = env['PYTHONPATH'] + ':' + os.path.join(
             os.path.sep, 'usr', 'lib', 'python3', 'dist-packages')
         return env
 
