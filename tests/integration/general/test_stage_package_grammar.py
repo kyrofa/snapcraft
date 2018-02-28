@@ -191,4 +191,4 @@ class StagePackageGrammarTestCase(integration.TestCase):
             ['prime', 'simple'])
 
         self.assertThat(exception.output, Contains(
-            "Unable to satisfy 'on i386', failure forced"))
+            "Unable to satisfy 'on i386 to other-arch', failure forced"))

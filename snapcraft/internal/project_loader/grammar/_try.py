@@ -91,8 +91,11 @@ class TryStatement:
 
         return primitives
 
+    def __str__(self):
+        return 'try'
+
     def __repr__(self):
-        return "'try'"
+        return '{!r}'.format(self.__str__())
 
 
 def _all_primitives_valid(primitives, checker):

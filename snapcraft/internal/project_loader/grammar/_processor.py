@@ -74,6 +74,7 @@ def _parse_dict(section, statement, statements, project_options,
     from ._on import OnStatement
     from ._to import ToStatement
     from ._try import TryStatement
+    from ._compound import CompoundStatement
 
     for key, value in section.items():
         # Grammar is always written as a list of selectors but the value can
@@ -85,20 +86,25 @@ def _parse_dict(section, statement, statements, project_options,
         if _ON_TO_CLAUSE_PATTERN.match(key):
             # We've come across the beginning of a compound statement
             # with both 'on' and 'to'.
-            # Those will be split into separate statements.
 
-            # Make this pass a 'to' statement
+            # First, extract each statement's part of the string
             on, to = _ON_TO_CLAUSE_PATTERN.match(key).groups()
-            key = to
 
-            # Inject an additional 'on' statement
-            prerequisite = OnStatement(
-                on=on, body={}, project_options=project_options,
-                checker=checker)
-        else:
-            prerequisite = None
+            # Now create a list of statements, in order
+            compound_statements = [
+                OnStatement(
+                    on=on, body={}, project_options=project_options,
+                    checker=checker),
+                ToStatement(
+                    to=to, body={}, project_options=project_options,
+                    checker=checker)]
 
-        if _ON_CLAUSE_PATTERN.match(key):
+            # Now our statement is a compound statement
+            statement = CompoundStatement(
+                statements=compound_statements, body=value,
+                project_options=project_options, checker=checker)
+
+        elif _ON_CLAUSE_PATTERN.match(key):
             # We've come across the beginning of an 'on' statement.
             # That means any previous statement we found is complete.
             # The first time through this may be None, but the
@@ -109,7 +115,7 @@ def _parse_dict(section, statement, statements, project_options,
                 on=key, body=value, project_options=project_options,
                 checker=checker)
 
-        if _TO_CLAUSE_PATTERN.match(key):
+        elif _TO_CLAUSE_PATTERN.match(key):
             # We've come across the beginning of a 'to' statement.
             # That means any previous statement we found is complete.
             # The first time through this may be None, but the
@@ -119,11 +125,8 @@ def _parse_dict(section, statement, statements, project_options,
             statement = ToStatement(
                 to=key, body=value, project_options=project_options,
                 checker=checker)
-            if prerequisite:
-                # When used as a compound statement, we'll have a prerequisite
-                statement.add_prerequisite(prerequisite)
 
-        if _TRY_CLAUSE_PATTERN.match(key):
+        elif _TRY_CLAUSE_PATTERN.match(key):
             # We've come across the beginning of a 'try' statement.
             # That means any previous statement we found is complete.
             # The first time through this may be None, but the
@@ -134,7 +137,7 @@ def _parse_dict(section, statement, statements, project_options,
                 body=value, project_options=project_options,
                 checker=checker)
 
-        if _ELSE_CLAUSE_PATTERN.match(key):
+        elif _ELSE_CLAUSE_PATTERN.match(key):
             _handle_else(statement, value)
 
     return statement

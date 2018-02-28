@@ -121,8 +121,11 @@ class OnStatement:
     def __eq__(self, other):
         return self.selectors == other.selectors
 
+    def __str__(self):
+        return 'on {}'.format(','.join(sorted(self.selectors)))
+
     def __repr__(self):
-        return "'on {}'".format(','.join(sorted(self.selectors)))
+        return '{!r}'.format(self.__str__())
 
 
 def _extract_on_clause_selectors(on):
