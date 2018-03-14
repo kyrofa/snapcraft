@@ -17,19 +17,17 @@
 import contextlib
 import json
 import os
-import shlex
 import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 from typing import Any, Callable, Dict  # noqa
 
 from snapcraft.internal import (
     common,
     errors,
 )
-
-from ._scriptlet_functions import functions
 
 
 class Runner:
@@ -74,22 +72,19 @@ class Runner:
     def _run_scriptlet(self, scriptlet_name: str, scriptlet: str,
                        workdir: str) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
-            call_fifo = _NonBlockingFifo(
-                path=os.path.join(tempdir, 'function_call'),
-                permissions=os.O_RDONLY)
-            feedback_fifo = _NonBlockingFifo(
-                path=os.path.join(tempdir, 'call_feedback'),
-                permissions=os.O_WRONLY)
+            call_fifo = _NonBlockingRWFifo(
+                os.path.join(tempdir, 'function_call'))
+            feedback_fifo = _NonBlockingRWFifo(
+                os.path.join(tempdir, 'call_feedback'))
 
             script = textwrap.dedent("""\
+                export SNAPCRAFTCTL_CALL_FIFO={call_fifo}
+                export SNAPCRAFTCTL_FEEDBACK_FIFO={feedback_fifo}
                 {env}
-                {functions}
                 {scriptlet}
             """.format(
-                env=common.assemble_env(), scriptlet=scriptlet,
-                functions=functions(
-                    call_fifo=call_fifo.path,
-                    feedback_fifo=feedback_fifo.path)))
+                call_fifo=call_fifo.path, feedback_fifo=feedback_fifo.path,
+                env=common.assemble_env(), scriptlet=scriptlet))
 
             process = subprocess.Popen(
                 ['/bin/sh', '-e', '-c', script], cwd=self._builddir)
@@ -101,8 +96,13 @@ class Runner:
                     if function_call:
                         self._handle_builtin_function(
                             scriptlet_name, function_call.strip())
-                        feedback_fifo.write('success\n')
+                        # Let caller know that function call has been handled
+                        # (must contain at least a newline)
+                        feedback_fifo.write('\n')
                     status = process.poll()
+
+                    # Don't loop TOO busily
+                    time.sleep(0.1)
             finally:
                 call_fifo.close()
                 feedback_fifo.close()
@@ -112,82 +112,60 @@ class Runner:
                     scriptlet_name=scriptlet_name, code=status)
 
     def _handle_builtin_function(self, scriptlet_name, function_call):
-        function_call_components = shlex.split(function_call)
-        if len(function_call_components) == 0:
-            # This means a snapcraft developer messed up. Should never be
-            # encountered in real life.
+        try:
+            function_json = json.loads(function_call)
+        except json.decoder.JSONDecodeError as e:
+            # This means a snapcraft developer messed up adding a new
+            # snapcraftctl function. Should never be encountered in real life.
             raise ValueError(
-                '{!r} scriptlet somehow managed to call a function without '
-                'providing a function name: {}'.format(
-                    scriptlet_name, function_call))
+                '{!r} scriptlet called a function with invalid json: '
+                '{}'.format(scriptlet_name, function_call)) from e
 
-        if len(function_call_components) > 2:
-            # This also means a snapcraft developer messed up. Should never be
-            # encountered in real life.
+        try:
+            function_name = function_json['function']
+            function_args = function_json['args']
+        except KeyError as e:
+            # This means a snapcraft developer messed up adding a new
+            # snapcraftctl function. Should never be encountered in real life.
             raise ValueError(
-                '{!r} scriptlet called a function with too many args (a max '
-                'of 1 arg is supported): {}'.format(
-                    scriptlet_name, function_call))
-
-        function_name = function_call_components[0]
-        kwargs = {}
-        if len(function_call_components) == 2:
-            try:
-                kwargs = json.loads(function_call_components[1])
-            except json.decoder.JSONDecodeError as e:
-                # This also means a snapcraft developer messed up. Should
-                # never be encountered in real life.
-                raise ValueError(
-                    '{!r} scriptlet called a function with its arg as invalid '
-                    'json: {}'.format(scriptlet_name, function_call)) from e
+                '{!r} scriptlet missing expected json field {!s} in args for '
+                'function call {!r}: {}'.format(
+                    scriptlet_name, e, function_name, function_args)) from e
 
         try:
             function = self._builtin_functions[function_name]
-            function(**kwargs)
+            function(**function_args)
         except KeyError as e:
-            # This also means a snapcraft developer messed up. Should never
-            # be encountered in real life.
+            # This means a snapcraft developer messed up adding a new
+            # snapcraftctl function. Should never be encountered in real life.
             raise ValueError(
                 '{!r} scriptlet called an undefined builtin function: '
-                '{}'.format(scriptlet_name, function_call)) from e
+                '{}'.format(scriptlet_name, function_name)) from e
 
 
-class _NonBlockingFifo:
+class _NonBlockingRWFifo:
 
-    def __init__(self, *, path: str, permissions) -> None:
+    def __init__(self, path) -> None:
         os.mkfifo(path)
         self.path = path
-        self._permissions = permissions
-        self._fd = None  # type: int
+
+        # Using RDWR for every FIFO just so we can open them reliably whenever
+        # (i.e. write-only FIFOs can't be opened successfully until the reader
+        # is in place)
+        self._fd = os.open(self.path, os.O_RDWR | os.O_NONBLOCK)
 
     def read(self) -> str:
         total_read = ''
-        if self._fifo_open():
-            with contextlib.suppress(BlockingIOError):
+        with contextlib.suppress(BlockingIOError):
+            value = os.read(self._fd, 1024)
+            while value:
+                total_read += value.decode(sys.getfilesystemencoding())
                 value = os.read(self._fd, 1024)
-                while value:
-                    total_read += value.decode(sys.getfilesystemencoding())
-                    value = os.read(self._fd, 1024)
         return total_read
 
     def write(self, data: str) -> int:
-        if self._fifo_open():
-            return os.write(self._fd, data.encode(sys.getfilesystemencoding()))
-        return 0
+        return os.write(self._fd, data.encode(sys.getfilesystemencoding()))
 
     def close(self) -> None:
         if self._fd is not None:
             os.close(self._fd)
-
-    def _fifo_open(self) -> bool:
-        """Return whether or not fifo is open. Attempt to open if not."""
-
-        if self._fd is None:
-            try:
-                # Read-only should work, but write-only may toss OSErrors if
-                # reader isn't hooked up.
-                self._fd = os.open(
-                    self.path, self._permissions | os.O_NONBLOCK)
-            except OSError:
-                return False
-        return True

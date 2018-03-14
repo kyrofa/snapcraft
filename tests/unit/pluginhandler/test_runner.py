@@ -46,7 +46,7 @@ class RunnerTestCase(unit.TestCase):
         os.mkdir('builddir')
 
         runner = _runner.Runner(
-                part_properties={'prepare': 'snapcraft_build'},
+                part_properties={'prepare': 'snapcraftctl build'},
                 builddir='builddir',
                 builtin_functions={'build': _fake_build})
 
@@ -70,7 +70,7 @@ class RunnerTestCase(unit.TestCase):
         os.mkdir('builddir')
 
         runner = _runner.Runner(
-                part_properties={'build': 'snapcraft_build'},
+                part_properties={'build': 'snapcraftctl build'},
                 builddir='builddir',
                 builtin_functions={'build': _fake_build})
 
@@ -94,7 +94,7 @@ class RunnerTestCase(unit.TestCase):
         os.mkdir('builddir')
 
         runner = _runner.Runner(
-                part_properties={'install': 'snapcraft_build'},
+                part_properties={'install': 'snapcraftctl build'},
                 builddir='builddir',
                 builtin_functions={'build': _fake_build})
 

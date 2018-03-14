@@ -444,7 +444,7 @@ properties:
             default: ''
           build:
             type: string
-            default: 'snapcraft_build'
+            default: 'snapcraftctl build'
           prepare:
             type: string
             default: ''
