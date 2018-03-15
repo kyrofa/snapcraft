@@ -29,7 +29,7 @@ from snapcraft.internal import (
     errors,
 )
 
-from ._scriptlet_functions import functions
+from ._scriptlet_function_call_handler import ScriptletFunctionCallHandler
 
 
 class Runner:
@@ -73,6 +73,8 @@ class Runner:
 
     def _run_scriptlet(self, scriptlet_name: str, scriptlet: str,
                        workdir: str) -> None:
+        function_handler = ScriptletFunctionCallHandler(self._builtin_functions)
+
         with tempfile.TemporaryDirectory() as tempdir:
             call_fifo = _NonBlockingFifo(
                 path=os.path.join(tempdir, 'function_call'),
@@ -82,14 +84,12 @@ class Runner:
                 permissions=os.O_WRONLY)
 
             script = textwrap.dedent("""\
+                export SNAPCRAFTCTL_SOCKET={socket_path}
                 {env}
-                {functions}
                 {scriptlet}
             """.format(
-                env=common.assemble_env(), scriptlet=scriptlet,
-                functions=functions(
-                    call_fifo=call_fifo.path,
-                    feedback_fifo=feedback_fifo.path)))
+                socket_path=function_handler.socket_path, env=common.assemble_env(),
+                scriptlet=scriptlet))
 
             process = subprocess.Popen(
                 ['/bin/sh', '-e', '-c', script], cwd=self._builddir)
@@ -97,15 +97,10 @@ class Runner:
             status = None
             try:
                 while status is None:
-                    function_call = call_fifo.read()
-                    if function_call:
-                        self._handle_builtin_function(
-                            scriptlet_name, function_call.strip())
-                        feedback_fifo.write('success\n')
+                    function_handler.check()
                     status = process.poll()
             finally:
-                call_fifo.close()
-                feedback_fifo.close()
+                function_handler.close()
 
             if status:
                 raise errors.ScriptletRunError(
