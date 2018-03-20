@@ -11,7 +11,7 @@ prepare: |
   snapcraft
 
   # Clean machine as much as possible
-  sudo apt autoremove
+  sudo apt autoremove --yes
 
 restore: |
   # Remove the build snap
