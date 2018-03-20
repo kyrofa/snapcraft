@@ -15,36 +15,54 @@ backends:
           kernel: GRUB 2
           workers: 3
 
-suites:
- spread_tests/:
-   summary: tests of the snapcraft snap
-   prepare: |
-     # apt update is hanging on security.ubuntu.com with IPv6, prefer IPv4 over IPv6
-     cat <<EOF > gai.conf
-     precedence  ::1/128       50
-     precedence  ::/0          40
-     precedence  2002::/16     30
-     precedence ::/96          20
-     precedence ::ffff:0:0/96 100
-     EOF
-     if ! mv gai.conf /etc/gai.conf; then
-       # not writable, disable ipv6 through sysctl
-       sysctl -w net.ipv6.conf.all.disable_ipv6=1
-       rm -f gai.conf
-     fi
+prepare: |
+  # apt update is hanging on security.ubuntu.com with IPv6, prefer IPv4 over IPv6
+  cat <<EOF > gai.conf
+  precedence  ::1/128       50
+  precedence  ::/0          40
+  precedence  2002::/16     30
+  precedence ::/96          20
+  precedence ::ffff:0:0/96 100
+  EOF
+  if ! mv gai.conf /etc/gai.conf; then
+    # not writable, disable ipv6 through sysctl
+    sysctl -w net.ipv6.conf.all.disable_ipv6=1
+    rm -f gai.conf
+  fi
+  apt update
+  # Squashfuse is required for LXD backend, harmless for others
+  apt install --yes snapd squashfuse
+  snap install core
+  snap install snapcraft --classic --edge
 
-     apt update
-     apt install --yes gcc g++ make python3-dev python3-venv libffi-dev libsodium-dev libapt-pkg-dev libarchive13 squashfs-tools xdelta3 bzr git mercurial subversion
-     # Only required for the lxd backend.
-     apt install --yes squashfuse
-     mkdir -p /snapcraft/venv
-     python3 -m venv /snapcraft/venv
-     # XXX the activate script has an unbound variable.
-     sed -i '1s/^/set +u\n/' /snapcraft/venv/bin/activate
-     source /snapcraft/venv/bin/activate
-     pip install --upgrade pip
-     pip install -r /snapcraft/requirements.txt -r /snapcraft/requirements-devel.txt
-     apt install --yes snapd
-     snap install snapcraft --classic --edge
+restore: |
+  # Remove all non-critical snaps
+  for snap in /snap/*; do
+        snap="${snap:6}"
+        case "$snap" in
+            "bin" | "core" | "snapcraft")
+                # Don't want to remove these
+                ;;
+            *)
+                snap remove "$snap"
+                ;;
+        esac
+    done
+
+suites:
+  spread_tests/integration/:
+    summary: tests of the snapcraft snap
+    prepare: |
+      apt install --yes gcc g++ make python3-dev python3-venv libffi-dev libsodium-dev libapt-pkg-dev libarchive13 squashfs-tools xdelta3 bzr git mercurial subversion
+      mkdir -p /snapcraft/venv
+      python3 -m venv /snapcraft/venv
+      # XXX the activate script has an unbound variable.
+      sed -i '1s/^/set +u\n/' /snapcraft/venv/bin/activate
+      source /snapcraft/venv/bin/activate
+      pip install --upgrade pip
+      pip install -r /snapcraft/requirements.txt -r /snapcraft/requirements-devel.txt
+
+  spread_tests/snap/:
+    summary: tests of snapcraft on individual snaps
 
 path: /snapcraft/

@@ -78,7 +78,7 @@ run_spread(){
     export PATH=$TMP_SPREAD:$PATH
     ( cd "$TMP_SPREAD" && curl -s -O https://niemeyer.s3.amazonaws.com/spread-amd64.tar.gz && tar xzvf spread-amd64.tar.gz )
 
-    spread -v linode:
+    spread -v linode:spread_tests/integration/
 }
 
 if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then

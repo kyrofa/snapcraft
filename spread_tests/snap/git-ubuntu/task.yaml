@@ -1,0 +1,23 @@
+summary: git-ubuntu verification
+warn-timeout: 30m
+kill-timeout: 2h
+
+prepare: |
+  # Fetch git-ubuntu and build it
+  git clone -b master https://git.launchpad.net/usd-importer
+
+  # Now build it
+  cd usd-importer
+  snapcraft
+
+  # Clean machine as much as possible
+  sudo apt autoremove
+
+restore: |
+  # Remove the build snap
+  rm -rf usd-importer
+
+execute: |
+  # Install the snap and run its awesome self-test
+  sudo snap install usd-importer/*.snap --dangerous --classic
+  git-ubuntu.self-test
