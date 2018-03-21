@@ -1,6 +1,6 @@
 summary: git-ubuntu verification
 warn-timeout: 30m
-kill-timeout: 2h
+kill-timeout: 5h
 
 prepare: |
   # Fetch git-ubuntu
