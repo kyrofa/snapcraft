@@ -14,9 +14,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import pathlib
+
 class Fileset:
     def __init__(self, paths):
-        self._paths = paths
+        self._mapping = {pathlib.PurePath(p): None for p in paths}
 
-    def match(self, glob_string):
-        DO THIS
+    def organize_paths(self, glob, destination):
+        for key in self._mapping:
+            if key.match(glob):
+                print('{} -> {}'.format(key, destination))

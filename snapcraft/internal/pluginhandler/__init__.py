@@ -19,6 +19,7 @@ import copy
 import filecmp
 import logging
 import os
+import pathlib
 import shutil
 import sys
 from glob import glob, iglob
@@ -458,31 +459,48 @@ class PluginHandler:
         fileset = getattr(self.plugin.options, option, default)
         return fileset if fileset else default
 
-    def organized_fileset(self):
+    def organize_fileset(self, snap_files: Set[str], snap_dirs: Set[str]):
         fileset = self._get_fileset('organize', {}).copy()
 
-        for key in sorted(fileset, key=lambda x: ['*' in x, x]):
-            src = os.path.join(source_dir, key)
-            # Remove the leading slash if there so os.path.join
-            # actually joins
-            dst = os.path.join(destination_dir, fileset[key].lstrip('/'))
+        snap_file_paths = {pathlib.PurePath(p): None for p in snap_files}
 
-            sources = iglob(src, recursive=True)
+        filemap = {}  # type: Dict[str, str]
+        for key in sorted(fileset, key=lambda x: ['*' in x, x]):
+            pattern = key.lstrip('/')
+            dst = fileset[key].lstrip('/')
+
+            for path in snap_file_paths.keys():
+                if path.match(pattern):
+                    if snap_file_paths[path] is not None:
+                        raise errors.SnapcraftEnvironmentError(
+                            'Trying to organize {src!r} to both {dst1!r} and '
+                            '{dst2!r}'.format(
+                                src=path, dst1=dst,
+                                dst2=snap_file_paths[path]))
+
+                    snap_file_paths[path] = dst
+
+
+            sources = iglob(os.path.join(self.installdir, key.lstrip('/')),
+                            recursive=True)
 
             for src in sources:
-                if os.path.isdir(src) and '*' not in key:
-                    file_utils.link_or_copy_tree(src, dst)
-                elif os.path.isfile(dst):
+                if dst in inverse_filemap:
                     raise errors.SnapcraftEnvironmentError(
-                        'Trying to organize file {key!r} to {dst!r}, '
-                        'but {dst!r} already exists'.format(
-                            key=key, dst=os.path.relpath(dst, destination_dir)))
-                else:
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
-                    file_utils.link_or_copy(src, dst)
+                        'Trying to organize both {src1!r} and {src2!r} to '
+                        '{dst!r}'.format(src1=src, src2=inverse_filemap[dst],
+                                         dst=dst))
+
+                inverse_filemap[dst] = os.path.relpath(
+                    src, start=self.installdir)
+
+        # Return non-inverted filemap
+        return filemap
 
     def _organize(self):
         fileset = self._get_fileset('organize', {})
+
+        print(self.organized_filemap())
 
         _organize_filesets(
             fileset.copy(), self.plugin.installdir, self.stagedir)
