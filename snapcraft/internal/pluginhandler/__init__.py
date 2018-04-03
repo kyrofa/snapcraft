@@ -458,10 +458,34 @@ class PluginHandler:
         fileset = getattr(self.plugin.options, option, default)
         return fileset if fileset else default
 
+    def organized_fileset(self):
+        fileset = self._get_fileset('organize', {}).copy()
+
+        for key in sorted(fileset, key=lambda x: ['*' in x, x]):
+            src = os.path.join(source_dir, key)
+            # Remove the leading slash if there so os.path.join
+            # actually joins
+            dst = os.path.join(destination_dir, fileset[key].lstrip('/'))
+
+            sources = iglob(src, recursive=True)
+
+            for src in sources:
+                if os.path.isdir(src) and '*' not in key:
+                    file_utils.link_or_copy_tree(src, dst)
+                elif os.path.isfile(dst):
+                    raise errors.SnapcraftEnvironmentError(
+                        'Trying to organize file {key!r} to {dst!r}, '
+                        'but {dst!r} already exists'.format(
+                            key=key, dst=os.path.relpath(dst, destination_dir)))
+                else:
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    file_utils.link_or_copy(src, dst)
+
     def _organize(self):
         fileset = self._get_fileset('organize', {})
 
-        _organize_filesets(fileset.copy(), self.plugin.installdir)
+        _organize_filesets(
+            fileset.copy(), self.plugin.installdir, self.stagedir)
 
     def stage(self, force=False):
         self.makedirs()
@@ -829,29 +853,26 @@ def _migrate_files(snap_files, snap_dirs, srcdir, dstdir, missing_ok=False,
         fixup_func(dst)
 
 
-def _organize_filesets(fileset, base_dir):
+def _organize_filesets(fileset, source_dir, destination_dir):
     for key in sorted(fileset, key=lambda x: ['*' in x, x]):
-        src = os.path.join(base_dir, key)
+        src = os.path.join(source_dir, key)
         # Remove the leading slash if there so os.path.join
         # actually joins
-        dst = os.path.join(base_dir, fileset[key].lstrip('/'))
+        dst = os.path.join(destination_dir, fileset[key].lstrip('/'))
 
         sources = iglob(src, recursive=True)
 
         for src in sources:
             if os.path.isdir(src) and '*' not in key:
                 file_utils.link_or_copy_tree(src, dst)
-                # TODO create alternate organization location to avoid
-                # deletions.
-                shutil.rmtree(src)
             elif os.path.isfile(dst):
                 raise errors.SnapcraftEnvironmentError(
                     'Trying to organize file {key!r} to {dst!r}, '
                     'but {dst!r} already exists'.format(
-                        key=key, dst=os.path.relpath(dst, base_dir)))
+                        key=key, dst=os.path.relpath(dst, destination_dir)))
             else:
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
-                shutil.move(src, dst)
+                file_utils.link_or_copy(src, dst)
 
 
 def _clean_migrated_files(snap_files, snap_dirs, directory):
