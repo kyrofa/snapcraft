@@ -20,9 +20,10 @@ import textwrap
 
 from unittest import mock
 from testtools.matchers import Contains, Equals, HasLength
+from testscenarios import multiply_scenarios
 
 import snapcraft
-from snapcraft.internal import lifecycle, pluginhandler, steps
+from snapcraft.internal import lifecycle, pluginhandler, states, steps
 
 from . import LifecycleTestBase
 
@@ -1279,17 +1280,17 @@ class NestedDependentTest(ReStepOrderTestBase):
         self.run_test()
 
 
-class DirtyTest(OrderTestBase):
-    scenarios = [
+class DirtyAndOutdatedTestCase(OrderTestBase):
+    tests = [
         # main tests
         ('main pull dirty', {
-            'test_dirty_parts': [dict(part='main', step=steps.PULL)],
+            'test_parts': [dict(part='main', step=steps.PULL)],
             'expected_initial': prime_order(),
             'expected_test': prime_order(),
             'expected_final': prime_order(),
         }),
         ('main build dirty', {
-            'test_dirty_parts': [dict(part='main', step=steps.BUILD)],
+            'test_parts': [dict(part='main', step=steps.BUILD)],
             'expected_initial': prime_order(),
             'expected_test': [
                 dict(part='main', step=steps.BUILD),
@@ -1307,7 +1308,7 @@ class DirtyTest(OrderTestBase):
             'expected_final': prime_order(),
         }),
         ('main stage dirty', {
-            'test_dirty_parts': [dict(part='main', step=steps.STAGE)],
+            'test_parts': [dict(part='main', step=steps.STAGE)],
             'expected_initial': prime_order(),
             'expected_test': [
                 dict(part='main', step=steps.STAGE),
@@ -1325,7 +1326,7 @@ class DirtyTest(OrderTestBase):
             'expected_final': prime_order(),
         }),
         ('main prime dirty', {
-            'test_dirty_parts': [dict(part='main', step=steps.PRIME)],
+            'test_parts': [dict(part='main', step=steps.PRIME)],
             'expected_initial': prime_order(),
             'expected_test': [
                 dict(part='main', step=steps.PRIME),
@@ -1338,7 +1339,7 @@ class DirtyTest(OrderTestBase):
 
         # dependent tests
         ('dependent pull dirty', {
-            'test_dirty_parts': [dict(part='dependent', step=steps.PULL)],
+            'test_parts': [dict(part='dependent', step=steps.PULL)],
             'expected_initial': prime_order(),
             'expected_test': [
                 dict(part='dependent', step=steps.PULL),
@@ -1362,7 +1363,7 @@ class DirtyTest(OrderTestBase):
             ],
         }),
         ('dependent build dirty', {
-            'test_dirty_parts': [dict(part='dependent', step=steps.BUILD)],
+            'test_parts': [dict(part='dependent', step=steps.BUILD)],
             'expected_initial': prime_order(),
             'expected_test': [
                 dict(part='dependent', step=steps.BUILD),
@@ -1386,7 +1387,7 @@ class DirtyTest(OrderTestBase):
             ],
         }),
         ('dependent stage dirty', {
-            'test_dirty_parts': [dict(part='dependent', step=steps.STAGE)],
+            'test_parts': [dict(part='dependent', step=steps.STAGE)],
             'expected_initial': prime_order(),
             'expected_test': [
                 dict(part='dependent', step=steps.STAGE),
@@ -1409,7 +1410,7 @@ class DirtyTest(OrderTestBase):
             ],
         }),
         ('dependent prime dirty', {
-            'test_dirty_parts': [dict(part='dependent', step=steps.PRIME)],
+            'test_parts': [dict(part='dependent', step=steps.PRIME)],
             'expected_initial': prime_order(),
             'expected_test': [
                 dict(part='dependent', step=steps.PRIME),
@@ -1420,7 +1421,7 @@ class DirtyTest(OrderTestBase):
 
         # nested dependent tests
         ('nested dependent pull dirty', {
-            'test_dirty_parts': [
+            'test_parts': [
                 dict(part='nested-dependent', step=steps.PULL)],
             'expected_initial': prime_order(),
             'expected_test': [
@@ -1437,7 +1438,7 @@ class DirtyTest(OrderTestBase):
             ],
         }),
         ('nested dependent build dirty', {
-            'test_dirty_parts': [
+            'test_parts': [
                 dict(part='nested-dependent', step=steps.BUILD)],
             'expected_initial': prime_order(),
             'expected_test': [
@@ -1454,7 +1455,7 @@ class DirtyTest(OrderTestBase):
             ],
         }),
         ('nested dependent stage dirty', {
-            'test_dirty_parts': [
+            'test_parts': [
                 dict(part='nested-dependent', step=steps.STAGE)],
             'expected_initial': prime_order(),
             'expected_test': [
@@ -1469,7 +1470,7 @@ class DirtyTest(OrderTestBase):
             ],
         }),
         ('nested dependent prime dirty', {
-            'test_dirty_parts': [
+            'test_parts': [
                 dict(part='nested-dependent', step=steps.PRIME)],
             'expected_initial': prime_order(),
             'expected_test': [
@@ -1479,8 +1480,33 @@ class DirtyTest(OrderTestBase):
         }),
     ]
 
+    test_types = [
+        ('dirty', dict(test_type='dirty')),
+        ('outdated', dict(test_type='outdated')),
+    ]
+
+    scenarios = multiply_scenarios(tests, test_types)
+
     def setUp(self):
         super().setUp()
+
+        for directory in ('main', 'dependent', 'nested-dependent'):
+            os.mkdir(directory)
+        self.project_config = self.make_snapcraft_project(
+            textwrap.dedent("""\
+                parts:
+                  main:
+                    plugin: dump
+                    source: main/
+                  dependent:
+                    plugin: dump
+                    source: dependent/
+                    after: [main]
+                  nested-dependent:
+                    plugin: dump
+                    source: nested-dependent/
+                    after: [dependent]
+                """))
 
         self.dirty_parts = []
         dirty_parts = self.dirty_parts
@@ -1512,7 +1538,16 @@ class DirtyTest(OrderTestBase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_dirty(self):
+    def make_outdated(self, part_name, step):
+        if step == steps.PULL:
+            open(os.path.join(part_name, 'file'), 'w').close()
+        else:
+            part = self.project_config.parts.get_part(part_name)
+            state_file_path = states.get_step_state_file(
+                part.plugin.statedir, step)
+            open(state_file_path, 'w').close()
+
+    def test_dirty_and_outdated(self):
         # Prime all parts
         lifecycle.execute(steps.PRIME, self.project_config)
 
@@ -1520,8 +1555,13 @@ class DirtyTest(OrderTestBase):
         self.assert_run_order_equal(
             initial_order, self.expected_initial, '(initial)')
 
-        # Make some parts dirty
-        self.dirty_parts.extend(self.test_dirty_parts)
+        if self.test_type == 'dirty':
+            # Make some parts dirty
+            self.dirty_parts.extend(self.test_parts)
+        else:
+            # Make some parts outdated
+            for part in self.test_parts:
+                self.make_outdated(part['part'], part['step'])
 
         # Prime again
         lifecycle.execute(steps.PRIME, self.project_config)
