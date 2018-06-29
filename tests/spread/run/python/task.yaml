@@ -1,0 +1,16 @@
+summary: build and run python snap
+
+# The python plugin requires 'pip download', which the pip on trusty does
+# not support.
+systems: [-ubuntu-14.04-*]
+
+execute: |
+  # Any release later than 16.04 requires libc as a stage-package
+  if [[ "$SPREAD_SYSTEM" != ubuntu-16.04-* ]]; then
+    echo "    stage-packages:" >> snap/snapcraft.yaml
+    echo "      - libc6" >> snap/snapcraft.yaml
+  fi
+
+  snapcraft
+  sudo snap install python-hello_*.snap --dangerous
+  [ "$(python-hello)" = "Hello world!" ]
