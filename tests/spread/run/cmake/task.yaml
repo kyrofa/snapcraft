@@ -1,0 +1,6 @@
+summary: build and run cmake snap
+
+execute: |
+  snapcraft
+  sudo snap install cmake-hello_*.snap --dangerous
+  [ "$(cmake-hello)" = "hello world" ]
