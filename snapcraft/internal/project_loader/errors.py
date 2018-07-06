@@ -92,6 +92,17 @@ class SnapcraftLogicError(ProjectLoaderError):
         super().__init__(message=message)
 
 
+class TemplateNotFoundError(ProjectLoaderError):
+    fmt = (
+        'Failed to apply template {template_name!r}: '
+        'a template by that name does not exist.\n'
+        'Check the template name and try again.'
+    )
+
+    def __init__(self, template_name: str):
+        super().__init__(template_name=template_name)
+
+
 def _determine_preamble(error):
     messages = []
     path = _determine_property_path(error)

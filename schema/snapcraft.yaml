@@ -211,6 +211,12 @@ properties:
   passthrough:
     type: object
     description: properties to be passed into snap.yaml as-is
+  templates:
+    type: array
+    minitems: 1
+    uniqueItems: true
+    items:
+      type: string
   apps:
     type: object
     additionalProperties: false
@@ -295,6 +301,18 @@ properties:
             items:
               type: string
           plugs:
+            type: array
+            minitems: 1
+            uniqueItems: true
+            items:
+              type: string
+          command-chain:
+            type: array
+            minitems: 1
+            uniqueItems: true
+            items:
+              type: string
+          templates:
             type: array
             minitems: 1
             uniqueItems: true

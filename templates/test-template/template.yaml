@@ -1,0 +1,7 @@
+parts:
+  test-template:
+    plugin: dump
+    source: $SNAPCRAFT_TEMPLATES_DIR/test-template/src
+
+apps:
+  command-chain: [hello]
