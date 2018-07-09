@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import contextlib
 import copy
 import functools
 import logging
@@ -25,6 +26,9 @@ from snapcraft.internal import common
 from . import errors
 
 logger = logging.getLogger(__name__)
+
+
+_MERGABLE_PROPERTIES = {'plugs', 'command-chain', 'after'}
 
 
 def apply_templates(yaml_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -41,8 +45,13 @@ def apply_templates(yaml_data: Dict[str, Any]) -> Dict[str, Any]:
 
         for template_name in template_names:
             template_data = _find_template(template_name)
-            _apply_app_template(
+            _apply_template(
                 yaml_data, app_name, template_name, template_data)
+
+        # Now that templates have been applied, no need to continue specifying
+        # them
+        with contextlib.suppress(KeyError):
+            del yaml_data['apps'][app_name]['templates']
 
     return yaml_data
 
@@ -62,10 +71,25 @@ def _find_template(template_name: str) -> Dict[str, Any]:
     return template_data
 
 
-def _apply_app_template(yaml_data: Dict[str, Any], app_name: str,
-                        template_name: str, template_data: Dict[str, Any]):
+def _apply_template(yaml_data: Dict[str, Any], app_name: str,
+                    template_name: str, template_data: Dict[str, Any]):
+    # Apply the app-specific components
+    app_definition = yaml_data['apps'][app_name]
+    app_template = template_data.get('app-template', {})
+    for property_name, property_value in app_template.items():
+        app_definition[property_name] = _apply_template_property(
+            property_name, app_definition.get(property_name), property_value)
+
+    # Next, apply the part-specific components
     parts = yaml_data['parts']
-    # Add any parts specified in the template
+    part_template = template_data.get('part-template', {})
+    for part_name, part_definition in parts.items():
+        for property_name, property_value in part_template.items():
+            part_definition[property_name] = _apply_template_property(
+                property_name, part_definition.get(property_name),
+                property_value)
+
+    # Finally, add any parts specified in the template
     for part_name, part_definition in template_data.get('parts', {}).items():
         if part_name in parts:
             logger.warn(
@@ -74,21 +98,12 @@ def _apply_app_template(yaml_data: Dict[str, Any], app_name: str,
         else:
             parts[part_name] = part_definition
 
-    # Now apply the app-specific components
-    app_definition = yaml_data['apps'][app_name]
-    for property_name, property_value in template_data.get('apps', {}).items():
-        app_definition[property_name] = _apply_template_property(
-            property_name, app_definition.get(property_name), property_value)
-
-    # Now that templates have been applied, no need to continue specifying them
-    del yaml_data['apps'][app_name]['templates']
-
 
 def _apply_template_property(property_name: str, existing_property: Any,
                              template_property: Any):
     if existing_property:
         # There are a few properties we need to merge instead of ignore
-        if property_name == 'plugs' or property_name == 'command-chain':
+        if property_name in _MERGABLE_PROPERTIES:
             return _merge_lists(existing_property, template_property)
         return existing_property
 

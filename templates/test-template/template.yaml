@@ -5,3 +5,5 @@ parts:
 
 apps:
   command-chain: [hello]
+  environment:
+    SNAP_LAUNCHER_ARCH_TRIPLET: $SNAPCRAFT_ARCH_TRIPLET

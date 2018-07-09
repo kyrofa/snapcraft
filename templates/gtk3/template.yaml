@@ -1,6 +1,12 @@
-apps:
-  plugs: [x11]
+app-template:
   command-chain: [desktop-launch]
+  plugs: [x11]
+  environment:
+    SNAP_LAUNCHER_ARCH_TRIPLET: $SNAPCRAFT_ARCH_TRIPLET
+    ARCH: $SNAPCRAFT_ARCH_TRIPLET
+
+part-template:
+  after: [gtk3]
 
 parts:
   gtk3:
