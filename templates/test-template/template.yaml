@@ -3,7 +3,5 @@ parts:
     plugin: dump
     source: $SNAPCRAFT_TEMPLATES_DIR/test-template/src
 
-apps:
+app-template:
   command-chain: [hello]
-  environment:
-    SNAP_LAUNCHER_ARCH_TRIPLET: $SNAPCRAFT_ARCH_TRIPLET

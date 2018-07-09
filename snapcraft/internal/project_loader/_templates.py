@@ -22,19 +22,18 @@ import os
 from typing import Any, Dict, List
 import yaml
 
+from snapcraft import formatting_utils
 from snapcraft.internal import common
 from . import errors
 
 logger = logging.getLogger(__name__)
 
 
-_MERGABLE_PROPERTIES = {'plugs', 'command-chain', 'after'}
-
-
 def apply_templates(yaml_data: Dict[str, Any]) -> Dict[str, Any]:
     # Don't modify the dict passed in
     yaml_data = copy.deepcopy(yaml_data)
 
+    applied_template_names = set()
     global_template_names = yaml_data.get('templates', [])
     for app_name, app_definition in yaml_data.get('apps', dict()).items():
         template_names = app_definition.get('templates')
@@ -48,10 +47,24 @@ def apply_templates(yaml_data: Dict[str, Any]) -> Dict[str, Any]:
             _apply_template(
                 yaml_data, app_name, template_name, template_data)
 
-        # Now that templates have been applied, no need to continue specifying
-        # them
+        # Keep track of the templates applied so we can warn about any that
+        # are declared, but not used
+        applied_template_names.update(template_names)
+
+        # Now that templates have been applied, remove the specification from
+        # this app
         with contextlib.suppress(KeyError):
             del yaml_data['apps'][app_name]['templates']
+
+    # Now that templates have been applied, remove the global specification
+    with contextlib.suppress(KeyError):
+        del yaml_data['templates']
+
+    unused_templates = set(global_template_names) - applied_template_names
+    if unused_templates:
+        logger.warning(
+            'The following templates are declared, but not used: {}'.format(
+                formatting_utils.humanize_list(unused_templates, 'and')))
 
     return yaml_data
 
@@ -78,16 +91,17 @@ def _apply_template(yaml_data: Dict[str, Any], app_name: str,
     app_template = template_data.get('app-template', {})
     for property_name, property_value in app_template.items():
         app_definition[property_name] = _apply_template_property(
-            property_name, app_definition.get(property_name), property_value)
+            app_definition.get(property_name), property_value)
 
     # Next, apply the part-specific components
     parts = yaml_data['parts']
+    template_part_names = set(template_data.get('parts', []))
     part_template = template_data.get('part-template', {})
     for part_name, part_definition in parts.items():
-        for property_name, property_value in part_template.items():
-            part_definition[property_name] = _apply_template_property(
-                property_name, part_definition.get(property_name),
-                property_value)
+        if part_name not in template_part_names:
+            for property_name, property_value in part_template.items():
+                part_definition[property_name] = _apply_template_property(
+                    part_definition.get(property_name), property_value)
 
     # Finally, add any parts specified in the template
     for part_name, part_definition in template_data.get('parts', {}).items():
@@ -99,12 +113,17 @@ def _apply_template(yaml_data: Dict[str, Any], app_name: str,
             parts[part_name] = part_definition
 
 
-def _apply_template_property(property_name: str, existing_property: Any,
-                             template_property: Any):
+def _apply_template_property(existing_property: Any, template_property: Any):
     if existing_property:
-        # There are a few properties we need to merge instead of ignore
-        if property_name in _MERGABLE_PROPERTIES:
-            return _merge_lists(existing_property, template_property)
+        if type(existing_property) is type(template_property):
+            # If the property is not scalar, merge them
+            if isinstance(existing_property, list):
+                return _merge_lists(existing_property, template_property)
+            elif isinstance(existing_property, dict):
+                for key, value in template_property.items():
+                    existing_property[key] = _apply_template_property(
+                        existing_property.get(key), value)
+                return existing_property
         return existing_property
 
     return template_property
