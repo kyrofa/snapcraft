@@ -30,7 +30,7 @@ import yaml
 
 import snapcraft.extractors
 from snapcraft import file_utils
-from snapcraft.internal import common, elf, errors, repo, sources, states, steps
+from snapcraft.internal import common, elf, errors, repo, sources, state, steps
 from snapcraft.internal.mangling import clear_execstack
 
 from ._build_attributes import BuildAttributes
@@ -80,10 +80,7 @@ class PluginHandler:
         if not self._source:
             self._source = part_schema["source"].get("default")
 
-        self._pull_state = None  # type: states.PullState
-        self._build_state = None  # type: states.BuildState
-        self._stage_state = None  # type: states.StageState
-        self._prime_state = None  # type: states.PrimeState
+        self._part_state = None  # type: state.Part
 
         self._project_options = project_options
         self.deps = []
@@ -124,28 +121,22 @@ class PluginHandler:
 
         self._migrate_state_file()
 
-    def get_pull_state(self) -> states.PullState:
-        if not self._pull_state:
-            self._pull_state = cast(states.PullState, self.get_state(steps.PULL))
-        return self._pull_state
+    def get_pull_state(self) -> state.PullStep:
+        return self.get_part_state().pull_step
 
-    def get_build_state(self) -> states.BuildState:
-        if not self._build_state:
-            self._build_state = cast(states.BuildState, self.get_state(steps.BUILD))
-        return self._build_state
+    def get_build_state(self) -> state.BuildStep:
+        return self.get_part_state().build_step
 
-    def get_stage_state(self) -> states.StageState:
-        if not self._stage_state:
-            self._stage_state = cast(states.StageState, self.get_state(steps.STAGE))
-        return self._stage_state
+    def get_stage_state(self) -> state.StageStep:
+        return self.get_part_state().stage_step
 
-    def get_prime_state(self) -> states.PrimeState:
-        if not self._prime_state:
-            self._prime_state = cast(states.PrimeState, self.get_state(steps.PRIME))
-        return self._prime_state
+    def get_prime_state(self) -> state.PrimeStep:
+        return self.get_part_state().prime_step
 
-    def get_state(self, step) -> states.PartState:
-        return states.get_state(self.plugin.statedir, step)
+    def get_part_state(self) -> state.Part:
+        if not self._part_state:
+            self._part_state = self._project_options._state.load_part_state(self.name)
+        return self._part_state
 
     def _get_source_handler(self, properties):
         """Returns a source_handler for the source in properties."""
@@ -449,6 +440,9 @@ class PluginHandler:
             with contextlib.suppress(errors.MissingMetadataFileError):
                 metadata.update(extract_metadata(self.name, file_path))
                 metadata_files.append(path)
+
+        part_state = self.get_part_state()
+        part_state.pull_step = state.PullStep()
 
         self.mark_done(
             steps.PULL,

@@ -14,10 +14,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from ._database import get_database_session_factory  # noqa: F401
-from ._part import Part  # noqa: F401
-from ._step import Step  # noqa: F401
-from ._pull_step import PullStep  # noqa: F401
-from ._build_step import BuildStep  # noqa: F401
-from ._stage_step import StageStep  # noqa: F401
-from ._prime_step import PrimeStep  # noqa: F401
+import sqlalchemy
+
+from ._base import Base
+
+
+class Part(Base):
+    __tablename__ = "parts"
+    name = sqlalchemy.Column(sqlalchemy.String, primary_key=True)
+    pull_step = sqlalchemy.orm.relationship("PullStep", uselist=False, back_populates="part", cascade="all, delete-orphan")
+    build_step = sqlalchemy.orm.relationship("BuildStep", uselist=False, back_populates="part", cascade="all, delete-orphan")
+    stage_step = sqlalchemy.orm.relationship("StageStep", uselist=False, back_populates="part", cascade="all, delete-orphan")
+    prime_step = sqlalchemy.orm.relationship("PrimeStep", uselist=False, back_populates="part", cascade="all, delete-orphan")

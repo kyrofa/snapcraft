@@ -14,10 +14,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from ._database import get_database_session_factory  # noqa: F401
-from ._part import Part  # noqa: F401
-from ._step import Step  # noqa: F401
-from ._pull_step import PullStep  # noqa: F401
-from ._build_step import BuildStep  # noqa: F401
-from ._stage_step import StageStep  # noqa: F401
-from ._prime_step import PrimeStep  # noqa: F401
+from ._step import Step
+
+
+import sqlalchemy
+import sqlalchemy.ext.declarative
+
+
+class PrimeStep(Step):
+    part = sqlalchemy.orm.relationship("Part", back_populates="prime_step")
+
+    __mapper_args__ = {"polymorphic_identity": "prime"}

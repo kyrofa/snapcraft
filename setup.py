@@ -154,6 +154,10 @@ else:
                 "share/snapcraft/template-data",
                 ["templates/" + x for x in os.listdir("templates")],
             ),
+            (
+                "share/snapcraft/database",
+                ["database/" + x for x in os.listdir("database")],
+            ),
         ],
         install_requires=["pysha3", "pyxdg", "requests"],
         test_suite="tests.unit",

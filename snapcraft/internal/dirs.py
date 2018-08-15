@@ -32,6 +32,7 @@ def setup_dirs() -> None:
         common.set_schemadir(os.path.join(topdir, "schema"))
         common.set_librariesdir(os.path.join(topdir, "libraries"))
         common.set_templatesdir(os.path.join(topdir, "templates"))
+        common.set_databasedir(os.path.join(topdir, "database"))
 
     # The default paths are relative to sys.prefix, which works well for
     # Snapcraft as a deb or in a venv. However, the Python plugin installs
@@ -44,3 +45,4 @@ def setup_dirs() -> None:
         common.set_schemadir(os.path.join(parent_dir, "schema"))
         common.set_librariesdir(os.path.join(parent_dir, "libraries"))
         common.set_templatesdir(os.path.join(parent_dir, "templates"))
+        common.set_databasedir(os.path.join(parent_dir, "database"))

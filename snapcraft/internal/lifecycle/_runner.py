@@ -30,6 +30,7 @@ from snapcraft.internal import (
     project_loader,
     repo,
     states,
+    state,
     steps,
 )
 from snapcraft.internal.cache import SnapCache

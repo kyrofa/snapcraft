@@ -14,10 +14,23 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from ._database import get_database_session_factory  # noqa: F401
-from ._part import Part  # noqa: F401
-from ._step import Step  # noqa: F401
-from ._pull_step import PullStep  # noqa: F401
-from ._build_step import BuildStep  # noqa: F401
-from ._stage_step import StageStep  # noqa: F401
-from ._prime_step import PrimeStep  # noqa: F401
+import enum
+import sqlalchemy
+
+from ._base import Base
+
+
+@enum.unique
+class ArtifactType(enum.Enum):
+    FILE = 1
+    DIRECTORY = 2
+
+
+class StepArtifact(Base):
+    __tablename__ = "step_artifacts"
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
+    step_id = sqlalchemy.Column(sqlalchemy.Integer, sqlalchemy.ForeignKey("steps.id"))
+    path = sqlalchemy.Column(sqlalchemy.String)
+    type = sqlalchemy.Column(sqlalchemy.Enum(ArtifactType))
+
+    __mapper_args__ = {"polymorphic_on": type, "polymorphic_identity": "step_artifact"}

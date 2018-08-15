@@ -47,6 +47,8 @@ _DEFAULT_LIBRARIESDIR = os.path.join(sys.prefix, "share", "snapcraft", "librarie
 _librariesdir = _DEFAULT_LIBRARIESDIR
 _DEFAULT_TEMPLATESDIR = os.path.join(sys.prefix, "share", "snapcraft", "templates")
 _templatesdir = _DEFAULT_TEMPLATESDIR
+_DEFAULT_DATABASEDIR = os.path.join(sys.prefix, "share", "snapcraft", "database")
+_databasedir = _DEFAULT_DATABASEDIR
 _DOCKERENV_FILE = "/.dockerenv"
 
 MAX_CHARACTERS_WRAP = 120
@@ -158,6 +160,15 @@ def set_templatesdir(templatesdir):
 
 def get_templatesdir():
     return _templatesdir
+
+
+def set_databasedir(databasedir):
+    global _databasedir
+    _databasedir = databasedir
+
+
+def get_databasedir():
+    return _databasedir
 
 
 def get_arch_triplet():
