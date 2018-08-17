@@ -20,7 +20,6 @@ import logging
 import os
 import sqlalchemy
 
-import snapcraft.project
 from snapcraft.internal import common
 
 from ._base import Base
@@ -44,7 +43,7 @@ def get_database_session_factory(database_path: str):
     # declaratives can be accessed through a session instance
     Base.metadata.bind = engine
 
-    return sqlalchemy.orm.sessionmaker(bind=engine)
+    return sqlalchemy.orm.scoped_session(sqlalchemy.orm.sessionmaker(bind=engine))
 
 
 def _run_migrations(database_url):

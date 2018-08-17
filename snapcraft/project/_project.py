@@ -52,8 +52,10 @@ class Project(ProjectOptions):
         self._internal_dir = os.path.join(self.project_dir, "snap", ".snapcraft")
         self._global_state_file = os.path.join(self._internal_dir, "state")
 
-        self._state = ProjectState(database_path=os.path.join(self._internal_dir, "state.db"))
-
         super().__init__(
             use_geoip, parallel_builds, target_deb_arch, debug, project_dir=project_dir
+        )
+
+        self._state = ProjectState(
+            project=self, database_path=os.path.join(self._internal_dir, "state.db")
         )

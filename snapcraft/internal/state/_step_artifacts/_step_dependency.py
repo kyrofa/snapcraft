@@ -14,14 +14,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import sqlalchemy
+
 from ._step_artifact import ArtifactType, StepArtifact
 
 
-import sqlalchemy
-import sqlalchemy.ext.declarative
+class StepDependency(StepArtifact):
+    step = sqlalchemy.orm.relationship("Step", back_populates="dependencies")
 
-
-class StepDirectory(StepArtifact):
-    step = sqlalchemy.orm.relationship("Step", back_populates="directories")
-
-    __mapper_args__ = {"polymorphic_identity": ArtifactType.DIRECTORY}
+    __mapper_args__ = {"polymorphic_identity": ArtifactType.DEPENDENCY.name}

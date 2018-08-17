@@ -13,6 +13,8 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+import datetime
 import os
 import requests
 import shutil
@@ -51,13 +53,13 @@ class Base:
         self.command = command
         self._checked = False
 
-    def check(self, target: str):
-        """Check if pulled sources have changed since target was created.
+    def check(self, timestamp: datetime.datetime):
+        """Check if pulled sources have changed later than timestamp.
 
         :param str target: Path to target file.
         """
         self._checked = True
-        return self._check(target)
+        return self._check(timestamp)
 
     def update(self):
         """Update pulled source.
@@ -69,10 +71,10 @@ class Base:
             raise RuntimeError("source must be checked before it's updated")
         self._update()
 
-    def _check(self, target: str):
-        """Check if pulled sources have changed since target was created.
+    def _check(self, timestamp: datetime.datetime):
+        """Check if pulled sources have changed later than timestamp.
 
-        :param str target: Path to target file.
+        :param datetime.datetime timestamp: Timestamp to compare against.
         """
         raise SourceUpdateUnsupportedError(self)
 

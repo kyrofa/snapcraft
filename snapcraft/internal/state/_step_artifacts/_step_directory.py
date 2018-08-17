@@ -14,23 +14,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import enum
+from ._step_artifact import ArtifactType, StepArtifact
+
+
 import sqlalchemy
-
-from ._base import Base
-
-
-@enum.unique
-class ArtifactType(enum.Enum):
-    FILE = 1
-    DIRECTORY = 2
+import sqlalchemy.ext.declarative
 
 
-class StepArtifact(Base):
-    __tablename__ = "step_artifacts"
-    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True)
-    step_id = sqlalchemy.Column(sqlalchemy.Integer, sqlalchemy.ForeignKey("steps.id"))
-    path = sqlalchemy.Column(sqlalchemy.String)
-    type = sqlalchemy.Column(sqlalchemy.Enum(ArtifactType))
+class StepDirectory(StepArtifact):
+    step = sqlalchemy.orm.relationship("Step", back_populates="directories")
 
-    __mapper_args__ = {"polymorphic_on": type, "polymorphic_identity": "step_artifact"}
+    __mapper_args__ = {"polymorphic_identity": ArtifactType.DIRECTORY.name}

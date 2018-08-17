@@ -16,32 +16,32 @@
 
 import contextlib
 
-from snapcraft.internal import state
-
 
 class ProjectState:
-    def __init__(self, *, database_path) -> None:
-        self._db_session_factory = state.get_database_session_factory(database_path)
+    def __init__(self, *, project, database_path: str) -> None:
+        from snapcraft.internal import state
+
+        self._db_session = state.get_database_session_factory(database_path)()
+
+        # Load project from database, or initialize one (there should only ever be one)
+        self.project = self._db_session.query(state.Project).first()
+        if not self.project:
+            self.project = state.Project(project)
+            self._db_session.add(self.project)
 
     @contextlib.contextmanager
     def _database_session(self):
         """Provide a transactional scope around database operations."""
 
-        session = self._db_session_factory()
-
         try:
-            yield session
-            session.commit()
-        except:
-            session.rollback()
+            yield self._db_session
+            self._db_session.commit()
+        except Exception:
+            self._db_session.rollback()
             raise
         finally:
-            session.close()
+            self._db_session.refresh(self.project)
 
-    def load_part_state(self, part_name: str) -> state.Part:
+    def save(self) -> None:
         with self._database_session() as session:
-            return session.query(state.Part).filter_by(name=part_name).one()
-
-    def save_part_state(self, part_state: state.Part) -> None:
-        with self._database_session() as session:
-            session.add(part_state)
+            session.add(self.project)

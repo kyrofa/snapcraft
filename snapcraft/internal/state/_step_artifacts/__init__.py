@@ -14,14 +14,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from ._step import Step
-
-
-import sqlalchemy
-import sqlalchemy.ext.declarative
-
-
-class BuildStep(Step):
-    part = sqlalchemy.orm.relationship("Part", back_populates="build_step")
-
-    __mapper_args__ = {"polymorphic_identity": "build"}
+from ._step_file import StepFile  # noqa: F401
+from ._step_directory import StepDirectory  # noqa: F401
+from ._step_dependency import StepDependency  # noqa: F401

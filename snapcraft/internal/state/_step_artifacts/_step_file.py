@@ -14,12 +14,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from ._database import get_database_session_factory  # noqa: F401
-from ._metadata import ExtractedMetadata, ScriptletMetadata  # noqa: F401
-from ._project import Project  # noqa: F401
-from ._part import Part  # noqa: F401
-from ._steps import Step  # noqa: F401
-from ._steps import PullStep  # noqa: F401
-from ._steps import BuildStep  # noqa: F401
-from ._steps import StageStep  # noqa: F401
-from ._steps import PrimeStep  # noqa: F401
+from ._step_artifact import ArtifactType, StepArtifact
+
+
+import sqlalchemy
+import sqlalchemy.ext.declarative
+
+
+class StepFile(StepArtifact):
+    step = sqlalchemy.orm.relationship("Step", back_populates="files")
+
+    __mapper_args__ = {"polymorphic_identity": ArtifactType.FILE.name}

@@ -15,9 +15,11 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import copy
+import datetime
 import functools
 import glob
 import os
+from typing import Set  # noqa: F401
 
 from snapcraft import file_utils
 from snapcraft.internal import common
@@ -40,14 +42,9 @@ class Local(Base):
             copy_function=self.copy_function,
         )
 
-    def _check(self, target):
-        try:
-            target_mtime = os.lstat(target).st_mtime
-        except FileNotFoundError:
-            return False
-
-        self._updated_files = set()
-        self._updated_directories = set()
+    def _check(self, timestamp: datetime.datetime):
+        self._updated_files = set()  # type: Set[str]
+        self._updated_directories = set()  # type: Set[str]
 
         for (root, directories, files) in os.walk(self.source_abspath, topdown=True):
             ignored = set(self._ignore(root, directories + files))
@@ -58,12 +55,18 @@ class Local(Base):
 
             for file_name in set(files) - ignored:
                 path = os.path.join(root, file_name)
-                if os.lstat(path).st_mtime >= target_mtime:
+                path_timestamp = datetime.datetime.fromtimestamp(
+                    os.lstat(path).st_mtime
+                )
+                if path_timestamp >= timestamp:
                     self._updated_files.add(os.path.relpath(path, self.source))
 
             for directory in directories:
                 path = os.path.join(root, directory)
-                if os.lstat(path).st_mtime >= target_mtime:
+                path_timestamp = datetime.datetime.fromtimestamp(
+                    os.lstat(path).st_mtime
+                )
+                if path_timestamp >= timestamp:
                     # Don't decend into this directory-- we'll just copy it
                     # entirely.
                     directories.remove(directory)

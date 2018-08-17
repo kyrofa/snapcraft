@@ -14,14 +14,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from ._step_artifact import ArtifactType, StepArtifact
+from ._metadata import MetadataSource, Metadata
 
 
 import sqlalchemy
 import sqlalchemy.ext.declarative
 
 
-class StepFile(StepArtifact):
-    step = sqlalchemy.orm.relationship("Step", back_populates="files")
+class ScriptletMetadata(Metadata):
+    step = sqlalchemy.orm.relationship("Step", back_populates="scriptlet_metadata")
 
-    __mapper_args__ = {"polymorphic_identity": ArtifactType.FILE}
+    __mapper_args__ = {"polymorphic_identity": MetadataSource.SCRIPTLET.name}

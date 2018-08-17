@@ -23,10 +23,9 @@ import os
 import shutil
 import subprocess
 import sys
+import sqlalchemy
 from glob import glob, iglob
 from typing import cast, Dict, Set, Sequence  # noqa: F401
-
-import yaml
 
 import snapcraft.extractors
 from snapcraft import file_utils
@@ -100,9 +99,7 @@ class PluginHandler:
         )
 
         # Scriptlet data is a dict of dicts for each step
-        self._scriptlet_metadata = collections.defaultdict(
-            snapcraft.extractors.ExtractedMetadata
-        )
+        self._scriptlet_metadata = collections.defaultdict(state.ScriptletMetadata)
         self._runner = Runner(
             part_properties=self._part_properties,
             sourcedir=self.plugin.sourcedir,
@@ -122,20 +119,26 @@ class PluginHandler:
         self._migrate_state_file()
 
     def get_pull_state(self) -> state.PullStep:
-        return self.get_part_state().pull_step
+        return getattr(self.get_part_state(), "pull_step", None)
 
     def get_build_state(self) -> state.BuildStep:
-        return self.get_part_state().build_step
+        return getattr(self.get_part_state(), "build_step", None)
 
     def get_stage_state(self) -> state.StageStep:
-        return self.get_part_state().stage_step
+        return getattr(self.get_part_state(), "stage_step", None)
 
     def get_prime_state(self) -> state.PrimeStep:
-        return self.get_part_state().prime_step
+        return getattr(self.get_part_state(), "prime_step", None)
 
     def get_part_state(self) -> state.Part:
         if not self._part_state:
-            self._part_state = self._project_options._state.load_part_state(self.name)
+            try:
+                self._part_state = self._project_options._state.project.parts.filter_by(
+                    name=self.name
+                ).one()
+            except sqlalchemy.orm.exc.NoResultFound:
+                self._part_state = state.Part(name=self.name, properties=self._part_properties)
+                self._project_options._state.project.parts.append(self._part_state)
         return self._part_state
 
     def _get_source_handler(self, properties):
@@ -161,21 +164,17 @@ class PluginHandler:
 
     def _set_version(self, *, version):
         try:
-            self._set_scriptlet_metadata(
-                snapcraft.extractors.ExtractedMetadata(version=version)
-            )
+            self._set_scriptlet_metadata(state.ScriptletMetadata(version=version))
         except errors.ScriptletDuplicateDataError as e:
             raise errors.ScriptletDuplicateFieldError("version", e.other_step)
 
     def _set_grade(self, *, grade):
         try:
-            self._set_scriptlet_metadata(
-                snapcraft.extractors.ExtractedMetadata(grade=grade)
-            )
+            self._set_scriptlet_metadata(state.ScriptletMetadata(grade=grade))
         except errors.ScriptletDuplicateDataError as e:
             raise errors.ScriptletDuplicateFieldError("grade", e.other_step)
 
-    def _set_scriptlet_metadata(self, metadata: snapcraft.extractors.ExtractedMetadata):
+    def _set_scriptlet_metadata(self, metadata: state.ScriptletMetadata):
         step = self.next_step()
 
         # First, ensure the metadata set here doesn't conflict with metadata
@@ -189,9 +188,10 @@ class PluginHandler:
         with contextlib.suppress(errors.NoLatestStepError):
             latest_step = self.latest_step()
             required_steps = latest_step.previous_steps() + [latest_step]
+            part_state = self.get_part_state()
             for other_step in reversed(required_steps):
-                state = states.get_state(self.plugin.statedir, other_step)
-                conflicts = metadata.overlap(state.scriptlet_metadata)
+                other_state = getattr(part_state, "{}_step".format(other_step.name))
+                conflicts = metadata.overlap(other_state.scriptlet_metadata)
                 if len(conflicts) > 0:
                     raise errors.ScriptletDuplicateDataError(
                         step, other_step, list(conflicts)
@@ -212,17 +212,18 @@ class PluginHandler:
             os.makedirs(d, exist_ok=True)
 
     def _migrate_state_file(self):
+        pass
         # In previous versions of Snapcraft, the state directory was a file.
         # Rather than die if we're running on output from an old version,
         # migrate it for them.
-        if os.path.isfile(self.plugin.statedir):
-            with open(self.plugin.statedir, "r") as f:
-                step = f.read()
+        # if os.path.isfile(self.plugin.statedir):
+        #     with open(self.plugin.statedir, "r") as f:
+        #         step = f.read()
 
-            if step:
-                os.remove(self.plugin.statedir)
-                os.makedirs(self.plugin.statedir)
-                self.mark_done(steps.get_step_by_name(step))
+        #     if step:
+        #         os.remove(self.plugin.statedir)
+        #         os.makedirs(self.plugin.statedir)
+        #         self.mark_done(steps.get_step_by_name(step))
 
     def working_directory_for_step(self, step: steps.Step) -> str:
         if step == steps.PULL:
@@ -237,8 +238,9 @@ class PluginHandler:
         raise errors.InvalidStepError(step.name)
 
     def latest_step(self):
+        part_state = self.get_part_state()
         for step in reversed(steps.STEPS):
-            if os.path.exists(states.get_step_state_file(self.plugin.statedir, step)):
+            if getattr(part_state, "{}_step".format(step.name), None):
                 return step
 
         raise errors.NoLatestStepError(self.name)
@@ -324,19 +326,19 @@ class PluginHandler:
         """
 
         # Retrieve the stored state for this step (assuming it has already run)
-        state = states.get_state(self.plugin.statedir, step)
-        if state:
+        step_state = getattr(self, "get_{}_state".format(step.name))()
+        if step_state:
             # state.properties contains the old YAML that this step cares
             # about, and we're comparing it to those same keys in the current
             # YAML (self._part_properties). If they've changed, then this step
             # is dirty and needs to run again.
-            properties = state.diff_properties_of_interest(self._part_properties)
+            properties = step_state.diff_part_properties_of_interest(self._part_properties)
 
-            # state.project_options contains the old project options that this
+            # step_state.project_options contains the old project options that this
             # step cares about, and we're comparing it to those same options in
             # the current project. If they've changed, then this step is dirty
             # and needs to run again.
-            options = state.diff_project_options_of_interest(self._project_options)
+            options = step_state.diff_project_options_of_interest(self._project_options)
 
             if properties or options:
                 return DirtyReport(
@@ -349,27 +351,17 @@ class PluginHandler:
         return force or self.is_clean(step)
 
     def step_timestamp(self, step):
-        try:
-            return os.stat(
-                states.get_step_state_file(self.plugin.statedir, step)
-            ).st_mtime
-        except FileNotFoundError as e:
-            raise errors.StepHasNotRunError(self.name, step) from e
+        step_state = getattr(self, "get_{}_state".format(step.name))()
+        if step_state is None:
+            raise errors.StepHasNotRunError(self.name, step)
 
-    def mark_done(self, step, state=None):
-        if not state:
-            state = {}
-
-        with open(states.get_step_state_file(self.plugin.statedir, step), "w") as f:
-            f.write(yaml.dump(state))
+        return step_state.updated_at
 
     def mark_cleaned(self, step):
-        state_file = states.get_step_state_file(self.plugin.statedir, step)
-        if os.path.exists(state_file):
-            os.remove(state_file)
-
-        if os.path.isdir(self.plugin.statedir) and not os.listdir(self.plugin.statedir):
-            os.rmdir(self.plugin.statedir)
+        step_state = getattr(self, "get_{}_state".format(step.name))()
+        if step_state:
+            step_state.delete()
+        self._project_options._state.save()
 
     def _fetch_stage_packages(self):
         stage_packages = self._grammar_processor.get_stage_packages()
@@ -408,12 +400,12 @@ class PluginHandler:
 
     def check_pull(self):
         # Check to see if pull needs to be updated
-        state_file = states.get_step_state_file(self.plugin.statedir, steps.PULL)
-
-        # Not all sources support checking for updates
-        with contextlib.suppress(sources.errors.SourceUpdateUnsupportedError):
-            if self.source_handler.check(state_file):
-                return OutdatedReport(source_updated=True)
+        step_state = self.get_pull_state()
+        if step_state:
+            # Not all sources support checking for updates
+            with contextlib.suppress(sources.errors.SourceUpdateUnsupportedError):
+                if self.source_handler.check(step_state.updated_at):
+                    return OutdatedReport(source_updated=True)
         return None
 
     def update_pull(self):
@@ -426,39 +418,27 @@ class PluginHandler:
         self.plugin.pull()
 
     def mark_pull_done(self):
-        pull_properties = self.plugin.get_pull_properties()
-
-        # Add the annotated list of build packages
-        part_build_packages = self._part_properties.get("build-packages", [])
-        part_build_snaps = self._part_properties.get("build-snaps", [])
-
         # Extract any requested metadata available in the source directory
-        metadata = snapcraft.extractors.ExtractedMetadata()
-        metadata_files = []
+        metadata = state.ExtractedMetadata()
         for path in self._part_properties.get("parse-info", []):
             file_path = os.path.join(self.plugin.sourcedir, path)
             with contextlib.suppress(errors.MissingMetadataFileError):
                 metadata.update(extract_metadata(self.name, file_path))
-                metadata_files.append(path)
+                metadata.files.append(path)
 
-        part_state = self.get_part_state()
-        part_state.pull_step = state.PullStep()
-
-        self.mark_done(
-            steps.PULL,
-            states.PullState(
-                pull_properties,
-                part_properties=self._part_properties,
-                project=self._project_options,
+        self.get_part_state().pull_step = state.PullStep(
+            property_names=self.plugin.get_pull_properties(),
+            extracted_metadata=metadata,
+            scriptlet_metadata=self._scriptlet_metadata[steps.PULL],
+            manifest=dict(
                 stage_packages=self.stage_packages,
-                build_snaps=part_build_snaps,
-                build_packages=part_build_packages,
+                build_snaps=self._part_properties.get("build-snaps", []),
+                build_packages=self._part_properties.get("build-packages", []),
                 source_details=self.source_handler.source_details,
-                metadata=metadata,
-                metadata_files=metadata_files,
-                scriptlet_metadata=self._scriptlet_metadata[steps.PULL],
             ),
         )
+
+        self._project_options._state.save()
 
     def clean_pull(self):
         if self.is_clean(steps.PULL):
@@ -526,9 +506,8 @@ class PluginHandler:
                 self.plugin.build_basedir,
                 copy_function=file_utils.copy,
             )
-            if not source.check(
-                states.get_step_state_file(self.plugin.statedir, steps.BUILD)
-            ):
+            build_state = self.get_build_state()
+            if not build_state or not source.check(build_state.updated_at):
                 return
             source.update()
 
@@ -552,14 +531,9 @@ class PluginHandler:
         self.mark_build_done()
 
     def mark_build_done(self):
-        build_properties = self.plugin.get_build_properties()
-        plugin_manifest = self.plugin.get_manifest()
-        machine_manifest = self._get_machine_manifest()
-
         # Extract any requested metadata available in the build directory,
         # followed by the install directory (which takes precedence)
-        metadata_files = []
-        metadata = snapcraft.extractors.ExtractedMetadata()
+        metadata = state.ExtractedMetadata()
         for path in self._part_properties.get("parse-info", []):
             file_path = os.path.join(self.plugin.builddir, path)
             found = False
@@ -573,28 +547,26 @@ class PluginHandler:
                 found = True
 
             if found:
-                metadata_files.append(path)
+                metadata.files.append(path)
             else:
                 # If this metadata file is not found in either build or
                 # install, check the pull state to make sure it was found
                 # there. If not, we need to let the user know.
-                state = self.get_pull_state()
-                if not state or path not in state.extracted_metadata["files"]:
+                pull_state = self.get_pull_state()
+                if not pull_state or path not in pull_state.extracted_metadata.files:
                     raise errors.MissingMetadataFileError(self.name, path)
 
-        self.mark_done(
-            steps.BUILD,
-            states.BuildState(
-                property_names=build_properties,
-                part_properties=self._part_properties,
-                project=self._project_options,
-                plugin_assets=plugin_manifest,
-                machine_assets=machine_manifest,
-                metadata=metadata,
-                metadata_files=metadata_files,
-                scriptlet_metadata=self._scriptlet_metadata[steps.BUILD],
+        self.get_part_state().build_step = state.BuildStep(
+            property_names=self.plugin.get_build_properties(),
+            extracted_metadata=metadata,
+            scriptlet_metadata=self._scriptlet_metadata[steps.BUILD],
+            manifest=dict(
+                plugin_assets=self.plugin.get_manifest(),
+                machine_assets=self._get_machine_manifest(),
             ),
         )
+
+        self._project_options._state.save()
 
     def _get_machine_manifest(self):
         # Use subprocess directly here. common.run_output will use binaries out
@@ -702,25 +674,23 @@ class PluginHandler:
         self.mark_stage_done(snap_files, snap_dirs)
 
     def mark_stage_done(self, snap_files, snap_dirs):
-        self.mark_done(
-            steps.STAGE,
-            states.StageState(
-                snap_files,
-                snap_dirs,
-                self._part_properties,
-                self._project_options,
-                self._scriptlet_metadata[steps.STAGE],
-            ),
+        self.get_part_state().stage_step = state.StageStep(
+            files=snap_files,
+            directories=snap_dirs,
+            property_names=self.plugin.get_build_properties(),
+            scriptlet_metadata=self._scriptlet_metadata[steps.STAGE],
         )
+
+        self._project_options._state.save()
 
     def clean_stage(self, project_staged_state):
         if self.is_clean(steps.STAGE):
             return
 
-        state = states.get_state(self.plugin.statedir, steps.STAGE)
+        step_state = self.get_stage_state()
 
         try:
-            self._clean_shared_area(self.stagedir, state, project_staged_state)
+            self._clean_shared_area(self.stagedir, step_state, project_staged_state)
         except AttributeError:
             raise errors.MissingStateCleanError(steps.STAGE)
 
@@ -791,26 +761,23 @@ class PluginHandler:
         return dependency_paths
 
     def mark_prime_done(self, snap_files, snap_dirs, dependency_paths):
-        self.mark_done(
-            steps.PRIME,
-            states.PrimeState(
-                snap_files,
-                snap_dirs,
-                dependency_paths,
-                self._part_properties,
-                self._project_options,
-                self._scriptlet_metadata[steps.PRIME],
-            ),
+        self.get_part_state().prime_step = state.PrimeStep(
+            files=snap_files,
+            directories=snap_dirs,
+            dependencies=dependency_paths,
+            scriptlet_metadata=self._scriptlet_metadata[steps.PRIME],
         )
+
+        self._project_options._state.save()
 
     def clean_prime(self, project_primed_state, hint=""):
         if self.is_clean(steps.PRIME):
             return
 
-        state = self.get_prime_state()
+        step_state = self.get_prime_state()
 
         try:
-            self._clean_shared_area(self.primedir, state, project_primed_state)
+            self._clean_shared_area(self.primedir, step_state, project_primed_state)
         except AttributeError:
             raise errors.MissingStateCleanError(steps.PRIME)
 

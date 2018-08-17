@@ -15,6 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import sqlalchemy
+from typing import Any, Dict
 
 from ._base import Base
 
@@ -22,7 +23,28 @@ from ._base import Base
 class Part(Base):
     __tablename__ = "parts"
     name = sqlalchemy.Column(sqlalchemy.String, primary_key=True)
-    pull_step = sqlalchemy.orm.relationship("PullStep", uselist=False, back_populates="part", cascade="all, delete-orphan")
-    build_step = sqlalchemy.orm.relationship("BuildStep", uselist=False, back_populates="part", cascade="all, delete-orphan")
-    stage_step = sqlalchemy.orm.relationship("StageStep", uselist=False, back_populates="part", cascade="all, delete-orphan")
-    prime_step = sqlalchemy.orm.relationship("PrimeStep", uselist=False, back_populates="part", cascade="all, delete-orphan")
+    project_id = sqlalchemy.Column(
+        sqlalchemy.Integer, sqlalchemy.ForeignKey("projects.id")
+    )
+    properties = sqlalchemy.Column(sqlalchemy.PickleType)
+
+    project = sqlalchemy.orm.relationship("Project", back_populates="parts")
+    pull_step = sqlalchemy.orm.relationship(
+        "PullStep", uselist=False, back_populates="part", cascade="all, delete-orphan"
+    )
+    build_step = sqlalchemy.orm.relationship(
+        "BuildStep", uselist=False, back_populates="part", cascade="all, delete-orphan"
+    )
+    stage_step = sqlalchemy.orm.relationship(
+        "StageStep", uselist=False, back_populates="part", cascade="all, delete-orphan"
+    )
+    prime_step = sqlalchemy.orm.relationship(
+        "PrimeStep", uselist=False, back_populates="part", cascade="all, delete-orphan"
+    )
+
+    def __init__(self, *, name: str, properties: Dict[str, Any]) -> None:
+        self.name = name
+        if properties:
+            self.properties = properties
+        else:
+            self.properties = {}
