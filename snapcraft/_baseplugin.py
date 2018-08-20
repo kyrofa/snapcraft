@@ -18,6 +18,7 @@ import contextlib
 import logging
 import os
 from subprocess import CalledProcessError
+from typing import Dict, List
 
 from snapcraft.internal import common, errors
 
@@ -125,6 +126,9 @@ class BasePlugin:
         # True if that's not desired.
         self.out_of_source_build = False
 
+        self._run_function = common.run
+        self._run_output_function = common.run_output
+
     # The API
     def pull(self):
         """Pull the source code and/or internal prereqs to build the part."""
@@ -170,15 +174,36 @@ class BasePlugin:
         """
         return []
 
-    def env(self, root):
-        """Return a list with the execution environment for building.
+    def pull_env(self) -> Dict[str, str]:
+        """Return a dict of environment variable names and values to use for pulling."""
+        return {}
 
-        Plugins often need special environment variables exported to the
-        system for some builds to take place. This is a list of strings
-        of the form key=value. The parameter root is the path to this part.
+    def build_env(self) -> Dict[str, str]:
+        """Return a dict of environment variable names and values to use for building."""
+        return {}
 
-        :param str root: The root for the part
-        """
+    def dependency_env(self) -> Dict[str, str]:
+        """Return a dict of environment variable names and values for use by dependents."""
+        return {}
+
+    def snap_env(self) -> Dict[str, str]:
+        """Return a dict of environment variable names and values for apps in the final snap."""
+        return {}
+
+    def pull_command_chain(self) -> List[str]:
+        """Return a list of commands to be prepended to the actual commands run when pulling."""
+        return []
+
+    def build_command_chain(self) -> List[str]:
+        """Return a list of commands to be prepended to the actual commands run when building."""
+        return []
+
+    def dependency_command_chain(self) -> List[str]:
+        """Return a list of commands to be prepended to the actual commands used by dependents."""
+        return []
+
+    def snap_command_chain(self) -> List[str]:
+        """Return a list of commands to be prepended to the apps in the final snap."""
         return []
 
     def enable_cross_compilation(self):
@@ -201,24 +226,18 @@ class BasePlugin:
             return self.project.parallel_build_count
 
     # Helpers
-    def run(self, cmd, cwd=None, **kwargs):
-        if not cwd:
-            cwd = self.builddir
-        print(" ".join(cmd))
-        os.makedirs(cwd, exist_ok=True)
-        try:
-            return common.run(cmd, cwd=cwd, **kwargs)
-        except CalledProcessError as process_error:
-            raise errors.SnapcraftPluginCommandError(
-                command=cmd, part_name=self.name, exit_code=process_error.returncode
-            ) from process_error
+    def run(self, cmd: List[str], **kwargs):
+        return self._do_run(self._run_function), cmd, **kwargs)
 
-    def run_output(self, cmd, cwd=None, **kwargs):
+    def run_output(self, cmd: List[str], **kwargs):
+        return self._do_run(self._run_output_function, cmd, **kwargs)
+
+    def _do_run(self, runnable, cmd: List[str], cwd: str=None, **kwargs):
         if not cwd:
             cwd = self.builddir
         os.makedirs(cwd, exist_ok=True)
         try:
-            return common.run_output(cmd, cwd=cwd, **kwargs)
+            return runnable(cmd, cwd=cwd, **kwargs)
         except CalledProcessError as process_error:
             raise errors.SnapcraftPluginCommandError(
                 command=cmd, part_name=self.name, exit_code=process_error.returncode
