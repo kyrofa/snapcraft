@@ -89,6 +89,7 @@ class BasePlugin:
         self.build_snaps = []
         self.build_packages = []
         self._stage_packages = []
+        self.__dependencies = []
 
         with contextlib.suppress(AttributeError):
             self._stage_packages = options.stage_packages.copy()
@@ -126,8 +127,16 @@ class BasePlugin:
         # True if that's not desired.
         self.out_of_source_build = False
 
-        self._run_function = common.run
-        self._run_output_function = common.run_output
+        self.__runner_script = None
+
+    def run_pull(self):
+        # Set the proper environment for pulling, then pull
+        self.__runner_script = _create_runner_script(self, steps.PULL)
+        self.pull()
+
+    def run_build(self):
+        self.__runner_script = _create_runner_script(self, steps.BUILD)
+        self.build()
 
     # The API
     def pull(self):
@@ -225,20 +234,65 @@ class BasePlugin:
         else:
             return self.project.parallel_build_count
 
+    def add_dependency(self, plugin):
+        self.__dependencies.append(plugin)
+
+    def dependencies(self):
+        return self.__dependencies.copy()
+
     # Helpers
     def run(self, cmd: List[str], **kwargs):
-        return self._do_run(self._run_function), cmd, **kwargs)
+        return self._do_run(comm.run), cmd, **kwargs)
 
     def run_output(self, cmd: List[str], **kwargs):
-        return self._do_run(self._run_output_function, cmd, **kwargs)
+        return self._do_run(common.run_output, cmd, **kwargs)
 
     def _do_run(self, runnable, cmd: List[str], cwd: str=None, **kwargs):
         if not cwd:
             cwd = self.builddir
         os.makedirs(cwd, exist_ok=True)
         try:
-            return runnable(cmd, cwd=cwd, **kwargs)
+            return runnable(["/bin/sh"] + cmd, input=self.__runner_script, cwd=cwd, **kwargs)
         except CalledProcessError as process_error:
             raise errors.SnapcraftPluginCommandError(
                 command=cmd, part_name=self.name, exit_code=process_error.returncode
             ) from process_error
+
+
+def _create_runner_script(step: steps.Step, part: BasePlugin) -> str:
+    script_lines = []  # type: List[str]
+
+    # First obtain the environment required to use the part's dependencies. Maintain
+    # backward compatibility with the deprecated env() function.
+    for dependency in part.dependencies():
+        try:
+            script_lines.extend([
+                "export {}".format(e)
+                for e in dependency.env(dependency.project.stage_dir)
+            ])
+        except AttributeError:
+            script_lines.extend([
+                'export {}="{}"'.format(k, v)
+                for k,v in dependency.dependency_env().items()
+            ])
+
+    # Now obtain the environment required to run this step from the part. Again,
+    # maintain backward compatibility with the deprecated env() function.
+    try:
+        script_lines.extend([
+            "export {}".format(e)
+            for e in part.env(part.installdir)
+        ])
+    except AttributeError:
+        script_lines.extend([
+            'export {}="{}"'.format(k, v)
+            for k,v in getattr(part, "{}_env".format(step.name))().items()
+        ])
+
+    command_line = 'exec'
+    for command in getattr(part, "{}_command_chain".format(step.name))():
+        command_line.append(' "{}"'.format(command))
+    command_line.append(' "$@"')
+    script_lines.append(command_line)
+
+    return "\n".join(script_lines)

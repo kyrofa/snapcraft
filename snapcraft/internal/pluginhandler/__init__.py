@@ -86,7 +86,7 @@ class PluginHandler:
         self._prime_state = None  # type: states.PrimeState
 
         self._project_options = project_options
-        self.deps = []
+        self._dependencies = []  # type: List[PluginHandler]
 
         self.stagedir = project_options.stage_dir
         self.primedir = project_options.prime_dir
@@ -129,6 +129,13 @@ class PluginHandler:
         self.__dependencies_env = []  # type: List[str]
 
         self._migrate_state_file()
+
+    def add_dependency(self, part: 'PluginHandler') -> None:
+        self._dependencies.append(part)
+        self.plugin.add_dependency(part.plugin)
+
+    def dependencies(self) -> List[PluginHandler]:
+        return self._dependencies.copy()
 
     def get_pull_state(self) -> states.PullState:
         if not self._pull_state:

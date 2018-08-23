@@ -54,23 +54,14 @@ MAX_CHARACTERS_WRAP = 120
 logger = logging.getLogger(__name__)
 
 
-def _run(cmd: List[str], runner: Callable, script_env: List[str]=None, **kwargs):
+def _run(cmd: List[str], runner: Callable, **kwargs):
     assert isinstance(cmd, list), "run command must be a list"
-    if not script_env:
-        script_env = []
-
-    cmd_string = " ".join([shlex.quote(c) for c in cmd])
-    with tempfile.TemporaryFile(mode="w+") as run_file:
-        print('\n'.join(script_env), file=run_file)
-        print("exec {}".format(cmd_string), file=run_file)
-        run_file.flush()
-        run_file.seek(0)
-        try:
-            return runner(["/bin/sh"], stdin=run_file, **kwargs)
-        except subprocess.CalledProcessError as call_error:
-            raise errors.SnapcraftCommandError(
-                command=cmd_string, call_error=call_error
-            ) from call_error
+    try:
+        return runner(cmd, **kwargs)
+    except subprocess.CalledProcessError as call_error:
+        raise errors.SnapcraftCommandError(
+            command=" ".join([shlex.quote(c) for c in cmd]), call_error=call_error
+        ) from call_error
 
 
 def run(cmd: List[str], **kwargs) -> None:
