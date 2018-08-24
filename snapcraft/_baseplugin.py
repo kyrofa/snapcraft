@@ -20,7 +20,7 @@ import os
 from subprocess import CalledProcessError
 from typing import Dict, List
 
-from snapcraft.internal import common, errors
+from snapcraft.internal import common, errors, steps
 
 
 logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ class BasePlugin:
         # True if that's not desired.
         self.out_of_source_build = False
 
-        self.__runner_script = None
+        self.__runner_scripts = dict()  # type: Dict[steps.Step, str]
 
     def run_pull(self):
         # Set the proper environment for pulling, then pull
@@ -242,57 +242,77 @@ class BasePlugin:
 
     # Helpers
     def run(self, cmd: List[str], **kwargs):
-        return self._do_run(comm.run), cmd, **kwargs)
+        return self._do_run(common.run, cmd, **kwargs)
 
     def run_output(self, cmd: List[str], **kwargs):
         return self._do_run(common.run_output, cmd, **kwargs)
 
-    def _do_run(self, runnable, cmd: List[str], cwd: str=None, **kwargs):
+    def _do_run(self, runnable, cmd: List[str], cwd: str = None, **kwargs):
         if not cwd:
             cwd = self.builddir
         os.makedirs(cwd, exist_ok=True)
         try:
-            return runnable(["/bin/sh"] + cmd, input=self.__runner_script, cwd=cwd, **kwargs)
+            return runnable(["/bin/sh"], input=self._runner_script, cwd=cwd, **kwargs)
         except CalledProcessError as process_error:
             raise errors.SnapcraftPluginCommandError(
                 command=cmd, part_name=self.name, exit_code=process_error.returncode
             ) from process_error
 
+    def _runner_script(self, step: steps.Step, cmd: List[str]) -> str:
+        if not self.__runner_scripts.get(step):
+            script_lines = _lines_from_dependency_envs(self.dependencies)
 
-def _create_runner_script(step: steps.Step, part: BasePlugin) -> str:
+            # Now obtain the environment required to run this step from the part.
+            # Maintain backward compatibility with the deprecated env() function.
+            try:
+                script_lines.extend(
+                    ["export {}".format(e) for e in self.env(self.installdir)]
+                )
+            except AttributeError:
+                script_lines.extend(
+                    [
+                        'export {}="{}"'.format(k, v)
+                        for k, v in getattr(self, "{}_env".format(step.name))().items()
+                    ]
+                )
+
+            command_line = "exec"
+            for command in getattr(self, "{}_command_chain".format(step.name))():
+                command_line.append(' "{}"'.format(command))
+            command_line.append(
+                ' "{}" "$@"'.format(" ".join([shlex.quote(c) for c in cmd]))
+            )
+            script_lines.append(command_line)
+
+            self.__runner_scripts[step] = "\n".join(script_lines)
+        return self.__runner_scripts[step]
+
+
+def _lines_from_dependency_envs(dependencies: List[BasePlugin]) -> List[str]:
     script_lines = []  # type: List[str]
-
-    # First obtain the environment required to use the part's dependencies. Maintain
-    # backward compatibility with the deprecated env() function.
-    for dependency in part.dependencies():
+    for dependency in dependencies:
+        # Maintain backward compatibility with the deprecated env() function.
         try:
-            script_lines.extend([
-                "export {}".format(e)
-                for e in dependency.env(dependency.project.stage_dir)
-            ])
+            script_lines.extend(
+                [
+                    "export {}".format(e)
+                    for e in dependency.env(dependency.project.stage_dir)
+                ]
+            )
         except AttributeError:
-            script_lines.extend([
-                'export {}="{}"'.format(k, v)
-                for k,v in dependency.dependency_env().items()
-            ])
+            script_lines.extend(
+                [
+                    'export {}="{}"'.format(k, v)
+                    for k, v in dependency.dependency_env().items()
+                ]
+            )
 
-    # Now obtain the environment required to run this step from the part. Again,
-    # maintain backward compatibility with the deprecated env() function.
-    try:
-        script_lines.extend([
-            "export {}".format(e)
-            for e in part.env(part.installdir)
-        ])
-    except AttributeError:
-        script_lines.extend([
-            'export {}="{}"'.format(k, v)
-            for k,v in getattr(part, "{}_env".format(step.name))().items()
-        ])
+    return script_lines
 
-    command_line = 'exec'
-    for command in getattr(part, "{}_command_chain".format(step.name))():
-        command_line.append(' "{}"'.format(command))
-    command_line.append(' "$@"')
-    script_lines.append(command_line)
 
-    return "\n".join(script_lines)
+def _command_chain_from_dependencies(dependencies: List[BasePlugin]) -> List[str]:
+    chain = []  # type: List[str]
+    for dependency in dependencies:
+        chain.extend(dependency.dependency_command_chain())
+
+    return chain
