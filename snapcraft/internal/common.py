@@ -23,7 +23,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import urllib
 from contextlib import suppress
 from typing import Callable, List

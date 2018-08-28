@@ -132,14 +132,6 @@ def snapcraft_global_environment(project: project.Project) -> Dict[str, str]:
     }
 
 
-def snapcraft_part_environment(part: pluginhandler.PluginHandler) -> Dict[str, str]:
-    return {
-        "SNAPCRAFT_PART_SRC": part.plugin.sourcedir,
-        "SNAPCRAFT_PART_BUILD": part.plugin.builddir,
-        "SNAPCRAFT_PART_INSTALL": part.plugin.installdir,
-    }
-
-
 def environment_to_replacements(environment: Dict[str, str]) -> Dict[str, str]:
     replacements = {}  # type: Dict[str, str]
     for variable, value in environment.items():

@@ -28,7 +28,6 @@ from ._env import (
     build_env_for_stage,
     runtime_env,
     snapcraft_global_environment,
-    snapcraft_part_environment,
 )
 from . import errors, grammar_processing
 
@@ -96,7 +95,7 @@ class PartsConfig:
             for dep in dep_names:
                 for i in range(len(self.all_parts)):
                     if dep == self.all_parts[i].name:
-                        part.deps.append(self.all_parts[i])
+                        part.add_dependency(self.all_parts[i])
                         break
 
     def _sort_parts(self):
@@ -114,7 +113,7 @@ class PartsConfig:
             for part in self.all_parts:
                 mentioned = False
                 for other in self.all_parts:
-                    if part in other.deps:
+                    if part in other.get_dependencies():
                         mentioned = True
                         break
                 if not mentioned:
@@ -252,49 +251,3 @@ class PartsConfig:
         self.all_parts.append(part)
 
         return part
-
-    def build_env_for_part(self, part, root_part=True) -> List[str]:
-        """Return a build env of all the part's dependencies."""
-
-        env = []  # type: List[str]
-        stagedir = self._project.stage_dir
-        is_host_compat = self._project.is_host_compatible_with_base(self._base)
-
-        if root_part:
-            # this has to come before any {}/usr/bin
-            env += part.env(part.plugin.installdir)
-            env += runtime_env(part.plugin.installdir, self._project.arch_triplet)
-            env += runtime_env(stagedir, self._project.arch_triplet)
-            env += build_env(
-                part.plugin.installdir, self._snap_name, self._project.arch_triplet
-            )
-            env += build_env_for_stage(
-                stagedir, self._snap_name, self._project.arch_triplet
-            )
-            # Only set the paths to the base snap if we are building on the
-            # same host. Failing to do so will cause Segmentation Faults.
-            if self._confinement == "classic" and is_host_compat:
-                env += env_for_classic(self._base, self._project.arch_triplet)
-
-            global_env = snapcraft_global_environment(self._project)
-            part_env = snapcraft_part_environment(part)
-            for variable, value in ChainMap(part_env, global_env).items():
-                env.append('{}="{}"'.format(variable, value))
-        else:
-            env += part.env(stagedir)
-            env += runtime_env(stagedir, self._project.arch_triplet)
-
-        for dep_part in part.deps:
-            env += dep_part.env(stagedir)
-            env += self.build_env_for_part(dep_part, root_part=False)
-
-        # LP: #1767625
-        # Remove duplicates from using the same plugin in dependent parts.
-        seen = set()  # type: Set[str]
-        deduped_env = list()  # type: List[str]
-        for e in env:
-            if e not in seen:
-                deduped_env.append(e)
-                seen.add(e)
-
-        return deduped_env

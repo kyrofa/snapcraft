@@ -24,7 +24,8 @@ import shutil
 import subprocess
 import sys
 from glob import glob, iglob
-from typing import cast, Dict, Set, Sequence  # noqa: F401
+from typing import cast, List, Set, Sequence
+from typing import Dict  # noqa: F401
 
 import yaml
 
@@ -122,19 +123,13 @@ class PluginHandler:
             },
         )
 
-        # Install proper run functions for the plugin (so we can control its
-        # environment)
-        self.plugin._run_function = self._plugin_run
-        self.plugin._run_output_function = self._plugin_run_output
-        self.__dependencies_env = []  # type: List[str]
-
         self._migrate_state_file()
 
-    def add_dependency(self, part: 'PluginHandler') -> None:
+    def add_dependency(self, part: "PluginHandler") -> None:
         self._dependencies.append(part)
         self.plugin.add_dependency(part.plugin)
 
-    def dependencies(self) -> List[PluginHandler]:
+    def get_dependencies(self) -> List["PluginHandler"]:
         return self._dependencies.copy()
 
     def get_pull_state(self) -> states.PullState:
@@ -947,33 +942,6 @@ class PluginHandler:
 
         if not step or step <= steps.PULL:
             self.clean_pull()
-
-    def _plugin_run(self, cmd, **kwargs):
-        # First of all, get the environment required to use any of this part's
-        # dependencies.
-        script_env = self._dependencies_env()
-
-        # Now make sure we're using the proper environment for this step.
-        next_step = self.next_step():
-        if next_step == steps.PULL:
-            step_env = self.plugin.pull_env()
-        elif next_step == steps.BUILD:
-        else:
-            # This is programmer error
-            raise RuntimeError... No. This is stupid, the pluginhandler should know what it's currently doing right now. Add a variable to track it if necessary.
-
-        return common.run(cmd, script_env=script_env, **kwargs)
-
-    def _plugin_run_output(self, cmd, **kwargs):
-        return common.run_output(cmd, script_env=script_env, **kwargs)
-
-    def _dependencies_env(self) -> List[str]:
-        if not self.__dependencies_env:
-            for dependency in self.deps:
-                for name, value in dependency.plugin.dependency_env().items():
-                    self.__dependencies_env.append('export {}="{}"'.format(name, value))
-
-        return self.__dependencies_env
 
 
 def _split_dependencies(dependencies, installdir, stagedir, primedir):

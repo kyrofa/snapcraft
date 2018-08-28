@@ -153,11 +153,10 @@ def _should_get_core(confinement: str) -> bool:
 
 
 def _replace_in_part(part):
+    replacements = project_loader.environment_to_replacements(
+        project_loader.snapcraft_part_environment(part)
+    )
     for key, value in part.plugin.options.__dict__.items():
-        replacements = project_loader.environment_to_replacements(
-            project_loader.snapcraft_part_environment(part)
-        )
-
         value = project_loader.replace_attr(value, replacements)
         setattr(part.plugin.options, key, value)
 
