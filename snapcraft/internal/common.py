@@ -23,6 +23,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib
 from contextlib import suppress
 from typing import Callable, List
@@ -50,17 +51,30 @@ _DOCKERENV_FILE = "/.dockerenv"
 
 MAX_CHARACTERS_WRAP = 120
 
+env = []  # type: List[str]
+
 logger = logging.getLogger(__name__)
+
+
+def assemble_env():
+    return "\n".join(["export " + e for e in env])
 
 
 def _run(cmd: List[str], runner: Callable, **kwargs):
     assert isinstance(cmd, list), "run command must be a list"
-    try:
-        return runner(cmd, **kwargs)
-    except subprocess.CalledProcessError as call_error:
-        raise errors.SnapcraftCommandError(
-            command=" ".join([shlex.quote(c) for c in cmd]), call_error=call_error
-        ) from call_error
+    cmd_string = " ".join([shlex.quote(c) for c in cmd])
+    # FIXME: This is gross to keep writing this, even when env is the same
+    with tempfile.TemporaryFile(mode="w+") as run_file:
+        print(assemble_env(), file=run_file)
+        print("exec {}".format(cmd_string), file=run_file)
+        run_file.flush()
+        run_file.seek(0)
+        try:
+            return runner(["/bin/sh"], stdin=run_file, **kwargs)
+        except subprocess.CalledProcessError as call_error:
+            raise errors.SnapcraftCommandError(
+                command=cmd_string, call_error=call_error
+            ) from call_error
 
 
 def run(cmd: List[str], **kwargs) -> None:
@@ -186,6 +200,11 @@ def get_url_scheme(url):
 
 def isurl(url):
     return get_url_scheme(url) != ""
+
+
+def reset_env():
+    global env
+    env = []
 
 
 def get_terminal_width(max_width=MAX_CHARACTERS_WRAP):
