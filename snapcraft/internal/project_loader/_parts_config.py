@@ -259,7 +259,7 @@ class PartsConfig:
         # Maintain backward compatibility with the deprecated .env() function.
         # The plugin environment needs to come before any {}/usr/bin
         try:
-            env += part.env(part.plugin.installdir)
+            env += part.env(part.plugin.installdir)  # type: ignore
         except AttributeError:
             env += _dict_to_env(part.plugin.get_env())
 
@@ -288,7 +288,7 @@ class PartsConfig:
         # Maintain backward compatibility with the deprecated .env() function.
         # The plugin environment needs to come before any {}/usr/bin
         try:
-            env += part.env(self._project.stage_dir)
+            env += part.env(self._project.stage_dir)  # type: ignore
         except AttributeError:
             env += _dict_to_env(part.plugin.get_dependency_env())
 
@@ -319,7 +319,7 @@ class PartsConfig:
         # Maintain backward compatibility with the deprecated .env() function.
         # The plugin environment needs to come before any {}/usr/bin
         try:
-            env += part.env(self._project.prime_dir)
+            env += part.env(self._project.prime_dir)  # type: ignore
         except AttributeError:
             env += _dict_to_env(part.plugin.get_snap_env())
 

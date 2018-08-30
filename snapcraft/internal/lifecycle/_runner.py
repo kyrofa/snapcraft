@@ -314,7 +314,7 @@ class _Executor:
             notify_part_progress(part, "Preparing to {}".format(step.name), debug=True)
             preparation_function()
 
-        common.command_chain = self.parts_config.get_part_command_chain()
+        common.command_chain = self.parts_config.get_part_command_chain(part)
         common.env = self.parts_config.get_part_env(part)
         common.env.extend(self.config.project_env())
 
@@ -351,7 +351,7 @@ class _Executor:
 
     def _create_meta(self, step, part_names):
         if step == steps.PRIME and part_names == self.config.part_names:
-            common.command_chain = self.parts_config.get_part_snap_command_chain(agh... need self.config.snap_command_chain to loop over em all)
+            common.command_chain = self.config.snap_command_chain()
             common.env = self.config.snap_env()
             meta.create_snap_packaging(
                 self.config.data,

@@ -21,6 +21,7 @@ import os.path
 import re
 
 import jsonschema
+from typing import List
 from typing import Set  # noqa: F401
 
 from snapcraft import project, formatting_utils
@@ -29,12 +30,7 @@ from snapcraft.internal import deprecations, remote_parts, states, steps
 from ._schema import Validator
 from ._parts_config import PartsConfig
 from ._templates import apply_templates
-from ._env import (
-    build_env_for_stage,
-    runtime_env,
-    snapcraft_global_environment,
-    environment_to_replacements,
-)
+from ._env import runtime_env, snapcraft_global_environment, environment_to_replacements
 from . import errors, grammar_processing, replace_attr
 
 
@@ -293,6 +289,12 @@ class Config:
             )
 
         return env
+
+    def snap_command_chain(self) -> List[str]:
+        command_chain = []  # type: List[str]
+        for part in self.parts.all_parts:
+            command_chain += part.plugin.get_snap_command_chain()
+        return command_chain
 
     def project_env(self):
         return [
