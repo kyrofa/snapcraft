@@ -259,7 +259,7 @@ class PartsConfig:
         # Maintain backward compatibility with the deprecated .env() function.
         # The plugin environment needs to come before any {}/usr/bin
         try:
-            env += part.env(part.plugin.installdir)  # type: ignore
+            env += part.plugin.env(part.plugin.installdir)  # type: ignore
         except AttributeError:
             env += _dict_to_env(part.plugin.get_env())
 
@@ -278,7 +278,7 @@ class PartsConfig:
         for dep_part in part.get_dependencies():
             chain += self._get_part_dependency_command_chain(dep_part)
 
-        chain += part.plugin.get_part_command_chain()
+        chain += part.plugin.get_command_chain()
 
         return chain
 
@@ -288,7 +288,7 @@ class PartsConfig:
         # Maintain backward compatibility with the deprecated .env() function.
         # The plugin environment needs to come before any {}/usr/bin
         try:
-            env += part.env(self._project.stage_dir)  # type: ignore
+            env += part.plugin.env(self._project.stage_dir)  # type: ignore
         except AttributeError:
             env += _dict_to_env(part.plugin.get_dependency_env())
 
@@ -319,7 +319,7 @@ class PartsConfig:
         # Maintain backward compatibility with the deprecated .env() function.
         # The plugin environment needs to come before any {}/usr/bin
         try:
-            env += part.env(self._project.prime_dir)  # type: ignore
+            env += part.plugin.env(self._project.prime_dir)  # type: ignore
         except AttributeError:
             env += _dict_to_env(part.plugin.get_snap_env())
 
@@ -353,7 +353,7 @@ class PartsConfig:
 
     #     if root_part:
     #         # this has to come before any {}/usr/bin
-    #         env += part.env(part.plugin.installdir)
+    #         env += part.plugin.env(part.plugin.installdir)
     #         env += runtime_env(part.plugin.installdir, self._project.arch_triplet)
     #         env += runtime_env(stagedir, self._project.arch_triplet)
     #         env += build_env(
@@ -372,11 +372,11 @@ class PartsConfig:
     #         for variable, value in ChainMap(part_env, global_env).items():
     #             env.append('{}="{}"'.format(variable, value))
     #     else:
-    #         env += part.env(stagedir)
+    #         env += part.plugin.env(stagedir)
     #         env += runtime_env(stagedir, self._project.arch_triplet)
 
     #     for dep_part in part.deps:
-    #         env += dep_part.env(stagedir)
+    #         env += dep_part.plugin.env(stagedir)
     #         env += self.build_env_for_part(dep_part, root_part=False)
 
     #     # LP: #1767625
