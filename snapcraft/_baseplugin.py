@@ -15,15 +15,12 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import contextlib
-import functools
-import itertools
 import logging
 import os
-import shlex
 from subprocess import CalledProcessError
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
-from snapcraft.internal import common, errors, steps
+from snapcraft.internal import common, errors
 
 
 logger = logging.getLogger(__name__)
@@ -92,7 +89,6 @@ class BasePlugin:
         self.build_snaps = []
         self.build_packages = []
         self._stage_packages = []
-        self.__dependencies = []
 
         with contextlib.suppress(AttributeError):
             self._stage_packages = options.stage_packages.copy()
@@ -129,24 +125,6 @@ class BasePlugin:
         # By default, snapcraft does an in-source build. Set this property to
         # True if that's not desired.
         self.out_of_source_build = False
-
-        self.__current_step = None  # type: steps.Step
-
-    def run_pull(self):
-        # Track the current step
-        self.__current_step = steps.PULL
-        try:
-            self.pull()
-        finally:
-            self.__current_step = None
-
-    def run_build(self):
-        # Track the current step
-        self.__current_step = steps.BUILD
-        try:
-            self.build()
-        finally:
-            self.__current_step = None
 
     # The API
     def pull(self):
@@ -193,35 +171,27 @@ class BasePlugin:
         """
         return []
 
-    def pull_env(self) -> Dict[str, str]:
-        """Return a dict of environment variable names and values to use for pulling."""
+    def get_env(self) -> Dict[str, str]:
+        """Return a dict of environment variable names and values for use by the part."""
         return {}
 
-    def build_env(self) -> Dict[str, str]:
-        """Return a dict of environment variable names and values to use for building."""
-        return {}
-
-    def dependency_env(self) -> Dict[str, str]:
+    def get_dependency_env(self) -> Dict[str, str]:
         """Return a dict of environment variable names and values for use by dependents."""
         return {}
 
-    def snap_env(self) -> Dict[str, str]:
+    def get_snap_env(self) -> Dict[str, str]:
         """Return a dict of environment variable names and values for apps in the final snap."""
         return {}
 
-    def pull_command_chain(self) -> List[str]:
-        """Return a list of commands to be prepended to the actual commands run when pulling."""
+    def get_command_chain(self) -> List[str]:
+        """Return a list of commands to be prepended to the actual commands run by the part."""
         return []
 
-    def build_command_chain(self) -> List[str]:
-        """Return a list of commands to be prepended to the actual commands run when building."""
-        return []
-
-    def dependency_command_chain(self) -> List[str]:
+    def get_dependency_command_chain(self) -> List[str]:
         """Return a list of commands to be prepended to the actual commands used by dependents."""
         return []
 
-    def snap_command_chain(self) -> List[str]:
+    def get_snap_command_chain(self) -> List[str]:
         """Return a list of commands to be prepended to the apps in the final snap."""
         return []
 
@@ -244,234 +214,26 @@ class BasePlugin:
         else:
             return self.project.parallel_build_count
 
-    def add_dependency(self, plugin):
-        self.__dependencies.append(plugin)
-
-    def get_dependencies(self):
-        return self.__dependencies.copy()
-
     # Helpers
-    def run(self, cmd: List[str], **kwargs):
-        return self._do_run(common.run, cmd, **kwargs)
-
-    def run_output(self, cmd: List[str], **kwargs):
-        return self._do_run(common.run_output, cmd, **kwargs)
-
-    def _do_run(self, runnable, cmd: List[str], cwd: str = None, **kwargs):
+    def run(self, cmd, cwd=None, **kwargs):
         if not cwd:
             cwd = self.builddir
+        print(" ".join(cmd))
         os.makedirs(cwd, exist_ok=True)
         try:
-            return runnable(
-                ["/bin/sh"],
-                input=_runner_script(self, self.__current_step, cmd),
-                cwd=cwd,
-                **kwargs
-            )
+            return common.run(cmd, cwd=cwd, **kwargs)
         except CalledProcessError as process_error:
             raise errors.SnapcraftPluginCommandError(
                 command=cmd, part_name=self.name, exit_code=process_error.returncode
             ) from process_error
 
-
-def _runner_script(part, step: steps.Step, cmd: List[str]) -> str:
-    env, chain = _env_and_command_chain(part, step)
-    command_line = "exec"
-    if chain:
-        command_line += " {}".format(chain)
-    command_line += ' "{}" "$@"'.format(" ".join([shlex.quote(c) for c in cmd]))
-
-    return "{}\n{}".format(env, command_line)
-
-
-# Don't load the same environment multiple times. This is limited by the number of
-# parts, so no need to limit the cache size.
-@functools.lru_cache(maxsize=0)
-def _env_and_command_chain(part: BasePlugin, step: steps.Step) -> Tuple[str, str]:
-    env_lines = _lines_from_dependency_envs(part.get_dependencies())
-
-    # Now obtain the environment required to run this step from the part.
-    # Maintain backward compatibility with the deprecated env() function.
-    try:
-        env = part.env(part.installdir)  # type: ignore
-        env_lines.extend(["export {}".format(e) for e in env])
-    except AttributeError:
-        env_lines.extend(
-            [
-                'export {}="{}"'.format(k, v)
-                for k, v in getattr(part, "{}_env".format(step.name))().items()
-            ]
-        )
-
-    command_chain = itertools.chain(
-        _command_chain_from_dependencies(part.get_dependencies()),
-        getattr(part, "{}_command_chain".format(step.name))(),
-    )
-
-    return ("\n".join(env_lines), " ".join(['"{}"'.format(c) for c in command_chain]))
-
-
-def _lines_from_dependency_envs(dependencies: List[BasePlugin]) -> List[str]:
-    script_lines = []  # type: List[str]
-    for dependency in dependencies:
-        # Maintain backward compatibility with the deprecated env() function.
+    def run_output(self, cmd, cwd=None, **kwargs):
+        if not cwd:
+            cwd = self.builddir
+        os.makedirs(cwd, exist_ok=True)
         try:
-            env = dependency.env(dependency.project.stage_dir)  # type: ignore
-            script_lines.extend(["export {}".format(e) for e in env])
-        except AttributeError:
-            script_lines.extend(
-                [
-                    'export {}="{}"'.format(k, v)
-                    for k, v in dependency.dependency_env().items()
-                ]
-            )
-
-    return script_lines
-
-
-def _command_chain_from_dependencies(dependencies: List[BasePlugin]) -> List[str]:
-    chain = []  # type: List[str]
-    for dependency in dependencies:
-        chain.extend(dependency.dependency_command_chain())
-
-    return chain
-
-
-def build_env_for_part(self, part, root_part=True) -> List[str]:
-    """Return a build env of all the part's dependencies."""
-
-    env = []  # type: List[str]
-    stagedir = self._project.stage_dir
-    is_host_compat = self._project.is_host_compatible_with_base(self._base)
-
-    if root_part:
-        # this has to come before any {}/usr/bin
-        env += part.env(part.plugin.installdir)
-        env += runtime_env(part.plugin.installdir, self._project.arch_triplet)
-        env += runtime_env(stagedir, self._project.arch_triplet)
-        env += build_env(
-            part.plugin.installdir, self._snap_name, self._project.arch_triplet
-        )
-        env += build_env_for_stage(
-            stagedir, self._snap_name, self._project.arch_triplet
-        )
-        # Only set the paths to the base snap if we are building on the
-        # same host. Failing to do so will cause Segmentation Faults.
-        if self._confinement == "classic" and is_host_compat:
-            env += env_for_classic(self._base, self._project.arch_triplet)
-
-        global_env = snapcraft_global_environment(self._project)
-        part_env = snapcraft_part_environment(part)
-        for variable, value in ChainMap(part_env, global_env).items():
-            env.append('{}="{}"'.format(variable, value))
-    else:
-        env += part.env(stagedir)
-        env += runtime_env(stagedir, self._project.arch_triplet)
-
-    for dep_part in part.get_dependencies():
-        env += dep_part.env(stagedir)
-        env += self.build_env_for_part(dep_part, root_part=False)
-
-    # LP: #1767625
-    # Remove duplicates from using the same plugin in dependent parts.
-    seen = set()  # type: Set[str]
-    deduped_env = list()  # type: List[str]
-    for e in env:
-        if e not in seen:
-            deduped_env.append(e)
-            seen.add(e)
-
-    return deduped_env
-
-
-def env_for_classic(base: str, arch_triplet: str) -> List[str]:
-    """Set the required environment variables for a classic confined build."""
-    env = []
-
-    core_path = common.get_core_path(base)
-    paths = common.get_library_paths(core_path, arch_triplet, existing_only=False)
-    env.append(
-        formatting_utils.format_path_variable(
-            "LD_LIBRARY_PATH", paths, prepend="", separator=":"
-        )
-    )
-
-    return env
-
-
-def runtime_env(root: str, arch_triplet: str) -> List[str]:
-    """Set the environment variables required for running binaries."""
-    env = []
-
-    env.append(
-        'PATH="'
-        + ":".join(
-            ["{0}/usr/sbin", "{0}/usr/bin", "{0}/sbin", "{0}/bin", "$PATH"]
-        ).format(root)
-        + '"'
-    )
-
-    # Add the default LD_LIBRARY_PATH
-    paths = common.get_library_paths(root, arch_triplet)
-    # Add more specific LD_LIBRARY_PATH from staged packages if necessary
-    paths += elf.determine_ld_library_path(root)
-
-    if paths:
-        env.append(
-            formatting_utils.format_path_variable(
-                "LD_LIBRARY_PATH", paths, prepend="", separator=":"
-            )
-        )
-
-    return env
-
-
-def build_env(root: str, snap_name: str, arch_triplet: str) -> List[str]:
-    """Set the environment variables required for building.
-
-    This is required for the current parts installdir due to stage-packages
-    and also to setup the stagedir.
-    """
-    env = []
-
-    paths = common.get_include_paths(root, arch_triplet)
-    if paths:
-        for envvar in ["CPPFLAGS", "CFLAGS", "CXXFLAGS"]:
-            env.append(
-                formatting_utils.format_path_variable(
-                    envvar, paths, prepend="-I", separator=" "
-                )
-            )
-
-    paths = common.get_library_paths(root, arch_triplet)
-    if paths:
-        env.append(
-            formatting_utils.format_path_variable(
-                "LDFLAGS", paths, prepend="-L", separator=" "
-            )
-        )
-
-    paths = common.get_pkg_config_paths(root, arch_triplet)
-    if paths:
-        env.append(
-            formatting_utils.format_path_variable(
-                "PKG_CONFIG_PATH", paths, prepend="", separator=":"
-            )
-        )
-
-    return env
-
-
-def build_env_for_stage(stagedir: str, snap_name: str, arch_triplet: str) -> List[str]:
-    env = build_env(stagedir, snap_name, arch_triplet)
-    env.append('PERL5LIB="{0}/usr/share/perl5/"'.format(stagedir))
-
-    return env
-
-
-def snapcraft_part_environment(part: pluginhandler.PluginHandler) -> Dict[str, str]:
-    return {
-        "SNAPCRAFT_PART_SRC": part.plugin.sourcedir,
-        "SNAPCRAFT_PART_BUILD": part.plugin.builddir,
-        "SNAPCRAFT_PART_INSTALL": part.plugin.installdir,
-    }
+            return common.run_output(cmd, cwd=cwd, **kwargs)
+        except CalledProcessError as process_error:
+            raise errors.SnapcraftPluginCommandError(
+                command=cmd, part_name=self.name, exit_code=process_error.returncode
+            ) from process_error

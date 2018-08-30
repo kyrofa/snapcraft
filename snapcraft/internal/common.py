@@ -52,6 +52,7 @@ _DOCKERENV_FILE = "/.dockerenv"
 MAX_CHARACTERS_WRAP = 120
 
 env = []  # type: List[str]
+command_chain = []  # type: List[str]
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +61,13 @@ def assemble_env():
     return "\n".join(["export " + e for e in env])
 
 
+def assemble_command_chain():
+    return " ".join([shlex.quote(c) for c in command_chain])
+
+
 def _run(cmd: List[str], runner: Callable, **kwargs):
     assert isinstance(cmd, list), "run command must be a list"
-    cmd_string = " ".join([shlex.quote(c) for c in cmd])
+    cmd_string = assemble_command_chain() + " ".join([shlex.quote(c) for c in cmd])
     # FIXME: This is gross to keep writing this, even when env is the same
     with tempfile.TemporaryFile(mode="w+") as run_file:
         print(assemble_env(), file=run_file)
@@ -204,7 +209,9 @@ def isurl(url):
 
 def reset_env():
     global env
+    global command_chain
     env = []
+    command_chain = []
 
 
 def get_terminal_width(max_width=MAX_CHARACTERS_WRAP):

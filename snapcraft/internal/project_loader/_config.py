@@ -265,19 +265,6 @@ class Config:
 
         return state
 
-    def stage_env(self):
-        stage_dir = self.project.stage_dir
-        env = []
-
-        env += runtime_env(stage_dir, self.project.arch_triplet)
-        env += build_env_for_stage(
-            stage_dir, self.data["name"], self.project.arch_triplet
-        )
-        for part in self.parts.all_parts:
-            env += part.env(stage_dir)
-
-        return env
-
     def snap_env(self):
         prime_dir = self.project.prime_dir
         env = []
@@ -285,7 +272,12 @@ class Config:
         env += runtime_env(prime_dir, self.project.arch_triplet)
         dependency_paths = set()
         for part in self.parts.all_parts:
-            env += part.env(prime_dir)
+            # Maintain backward compatibility with the deprecated .env() function
+            try:
+                env += part.plugin.env(prime_dir)
+            except AttributeError:
+                part_env = part.plugin.get_snap_env()
+                env += ['{}="{}"'.format(k, v) for k, v in part_env.items()]
             dependency_paths |= part.get_primed_dependency_paths()
 
         # Dependency paths are only valid if they actually exist. Sorting them

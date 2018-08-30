@@ -494,8 +494,15 @@ class _SnapPackaging:
             self._config_data["confinement"] == "classic"
             or not self._is_host_compatible_with_base
         ):
+            assembled_command_chain = None
             assembled_env = None
         else:
+            assembled_command_chain = common.assemble_command_chain()
+            assembled_command_chain = assembled_command_chain.replace(
+                self._prime_dir, "$SNAP"
+            )
+            assembled_command_chain = replace_path.sub("$SNAP", assembled_command_chain)
+
             assembled_env = common.assemble_env()
             assembled_env = assembled_env.replace(self._prime_dir, "$SNAP")
             assembled_env = replace_path.sub("$SNAP", assembled_env)
@@ -512,6 +519,9 @@ class _SnapPackaging:
                 # local 'parts' dir, have the wrapper script execute it
                 # directly, since we can't use $SNAP in the shebang itself.
                 executable = '"{}" "{}"'.format(new_shebang, wrapexec)
+
+        if assembled_command_chain:
+            executable = "{} {}".format(assembled_command_chain, executable)
 
         with open(wrappath, "w+") as f:
             print("#!/bin/sh", file=f)

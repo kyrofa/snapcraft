@@ -164,7 +164,7 @@ def _replace_in_part(part):
 
 
 class _Executor:
-    def __init__(self, project_config):
+    def __init__(self, project_config: project_loader._config.Config) -> None:
         self.config = project_config
         self.project = project_config.project
         self.parts_config = project_config.parts
@@ -314,7 +314,8 @@ class _Executor:
             notify_part_progress(part, "Preparing to {}".format(step.name), debug=True)
             preparation_function()
 
-        common.env = self.parts_config.build_env_for_part(part)
+        common.command_chain = self.parts_config.get_part_command_chain()
+        common.env = self.parts_config.get_part_env(part)
         common.env.extend(self.config.project_env())
 
         part = _replace_in_part(part)
@@ -350,6 +351,7 @@ class _Executor:
 
     def _create_meta(self, step, part_names):
         if step == steps.PRIME and part_names == self.config.part_names:
+            common.command_chain = self.parts_config.get_part_snap_command_chain(agh... need self.config.snap_command_chain to loop over em all)
             common.env = self.config.snap_env()
             meta.create_snap_packaging(
                 self.config.data,
