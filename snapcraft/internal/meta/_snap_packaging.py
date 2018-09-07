@@ -114,6 +114,17 @@ def create_snap_packaging(
     return packaging.meta_dir
 
 
+def verify_apps(config_data: Dict[str, Any], project: Project):
+    """Verify that all apps are actually valid executables in the snap.
+
+    :param dict config_data: project values defined in snapcraft.yaml.
+    :param Project project: project settings.
+    """
+
+    packaging = _SnapPackaging(config_data, project)
+    packaging.verify_apps()
+
+
 def _update_yaml_with_extracted_metadata(
     config_data: Dict[str, Any], parts_config: project_loader.PartsConfig
 ) -> None:
@@ -339,6 +350,18 @@ class _SnapPackaging:
                 "gadget.yaml", os.path.join(self.meta_dir, "gadget.yaml")
             )
 
+    def verify_apps(self) -> None:
+        for app_name, app in self._config_data.get("apps", {}).items():
+            cmds = (k for k in ("command", "stop-command") if k in app)
+            for k in cmds:
+                execparts = shlex.split(app[k])
+                exepath = os.path.join(self._prime_dir, execparts[0])
+                if not os.path.exists(exepath) and "/" not in execparts[0]:
+                    try:
+                        _find_bin(execparts[0], self._prime_dir)
+                    except meta_errors.CommandError as e:
+                        raise errors.InvalidAppCommandError(str(e), app_name)
+
     def _record_manifest_and_source_snapcraft_yaml(self):
         prime_snap_dir = os.path.join(self._prime_dir, "snap")
         recorded_snapcraft_yaml_path = os.path.join(prime_snap_dir, "snapcraft.yaml")
@@ -540,7 +563,6 @@ class _SnapPackaging:
 
         wrapexec = "$SNAP/{}".format(execparts[0])
         if not os.path.exists(exepath) and "/" not in execparts[0]:
-            _find_bin(execparts[0], self._prime_dir)
             wrapexec = execparts[0]
         else:
             with open(exepath, "rb") as exefile:

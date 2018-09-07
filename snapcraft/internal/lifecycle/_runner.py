@@ -153,11 +153,10 @@ def _should_get_core(confinement: str) -> bool:
 
 
 def _replace_in_part(part):
+    replacements = project_loader.environment_to_replacements(
+        project_loader.snapcraft_part_environment(part)
+    )
     for key, value in part.plugin.options.__dict__.items():
-        replacements = project_loader.environment_to_replacements(
-            project_loader.snapcraft_part_environment(part)
-        )
-
         value = project_loader.replace_attr(value, replacements)
         setattr(part.plugin.options, key, value)
 
@@ -165,7 +164,7 @@ def _replace_in_part(part):
 
 
 class _Executor:
-    def __init__(self, project_config):
+    def __init__(self, project_config: project_loader._config.Config) -> None:
         self.config = project_config
         self.project = project_config.project
         self.parts_config = project_config.parts
@@ -358,6 +357,9 @@ class _Executor:
                 self.project,
                 self.config.validator.schema,
             )
+
+            # Now verify that executables can be found and are executible
+            meta.verify_apps(self.config.data, self.project)
 
     def _handle_dirty(self, part, step, dirty_report, cli_config):
         dirty_action = cli_config.get_outdated_step_action()
