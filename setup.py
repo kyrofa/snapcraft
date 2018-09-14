@@ -139,12 +139,11 @@ else:
         # non-cx_Freeze arguments
         entry_points={
             "console_scripts": [
-                "snapcraft = snapcraft.cli.__main__:run",
                 "snapcraft-parser = snapcraft.internal.parser:main",
             ]
         },
-        # This is not in console_scripts because we need a clean environment
-        scripts=["bin/snapcraftctl"],
+        # snapcraftctl is not in console_scripts because we need a clean environment
+        scripts=["bin/snapcraft", "bin/snapcraftctl"],
         data_files=[
             ("share/snapcraft/schema", ["schema/" + x for x in os.listdir("schema")]),
             (
