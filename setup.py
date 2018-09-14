@@ -124,7 +124,42 @@ if sys.platform == "win32":
 
 # On other platforms, continue as normal
 else:
+    import os
     from setuptools import setup
+    from setuptools.command.install import install
+    from setuptools.command.develop import develop
+    import subprocess
+
+    def _install_legacy_snapcraft(install_lib):
+        legacy_snapcraft_dir = os.path.join(
+            os.path.dirname(__file__), "vendor", "legacy_snapcraft"
+        )
+        subprocess.check_call(
+            [
+                "pip",
+                "install",
+                "-r",
+                "{}/requirements.txt".format(legacy_snapcraft_dir),
+                "-r",
+                "{}/requirements-devel.txt".format(legacy_snapcraft_dir),
+                "--target",
+                "{}/snapcraft/legacy_snapcraft".format(install_lib),
+                legacy_snapcraft_dir,
+            ]
+        )
+
+    class DevelopLegacySnapcraft(develop):
+        def run(self):
+            super().run()
+            # Unfortunately, --target clashes with --editable, see
+            # https://github.com/pypa/pip/issues/4390 for more information. Edits to
+            # legacy should probably happen in the legacy branch anyway, though.
+            _install_legacy_snapcraft(self.install_dir)
+
+    class InstallLegacySnapcraft(install):
+        def run(self):
+            super().run()
+            _install_legacy_snapcraft(self.install_lib)
 
     setup(
         name=name,
@@ -139,12 +174,12 @@ else:
         # non-cx_Freeze arguments
         entry_points={
             "console_scripts": [
-                "snapcraft = snapcraft.cli.__main__:run",
-                "snapcraft-parser = snapcraft.internal.parser:main",
+                # "snapcraft = snapcraft.cli.__main__:run",
+                "snapcraft-parser = snapcraft.internal.parser:main"
             ]
         },
-        # This is not in console_scripts because we need a clean environment
-        scripts=["bin/snapcraftctl"],
+        # snapcraftctl is not in console_scripts because we need a clean environment
+        scripts=["bin/snapcraft", "bin/snapcraftctl"],
         data_files=[
             ("share/snapcraft/schema", ["schema/" + x for x in os.listdir("schema")]),
             (
@@ -158,4 +193,5 @@ else:
         ],
         install_requires=["pysha3", "pyxdg", "requests"],
         test_suite="tests.unit",
+        cmdclass={"install": InstallLegacySnapcraft, "develop": DevelopLegacySnapcraft},
     )
