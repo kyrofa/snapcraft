@@ -1,3 +1,7 @@
 [submodule "docs"]
 	path = docs
 	url = https://github.com/CanonicalLtd/snappy-docs.git
+[submodule "vendor/legacy_snapcraft"]
+	path = vendor/legacy_snapcraft
+	url = https://github.com/snapcore/snapcraft.git
+	branch = legacy
