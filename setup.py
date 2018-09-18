@@ -124,40 +124,7 @@ if sys.platform == "win32":
 
 # On other platforms, continue as normal
 else:
-    import os
     from setuptools import setup
-    from setuptools.command.install import install
-    from setuptools.command.develop import develop
-    import subprocess
-
-    def _install_legacy_snapcraft(prefix):
-        subprocess.check_call(
-            [
-                "pip",
-                "install",
-                "snapcraft<3.0",
-                "--target",
-                "{}/share/legacy_snapcraft".format(prefix),
-            ]
-        )
-
-    class DevelopLegacySnapcraft(develop):
-        def run(self):
-            super().run()
-
-            # The develop command doesn't get self.prefix filled out, so pull it out
-            # of config vars.
-            prefix = self.get_finalized_command('install').config_vars["prefix"]
-
-            # Unfortunately, --target clashes with --editable, see
-            # https://github.com/pypa/pip/issues/4390 for more information. Edits to
-            # legacy should probably happen in the legacy branch anyway, though.
-            _install_legacy_snapcraft(prefix)
-
-    class InstallLegacySnapcraft(install):
-        def run(self):
-            super().run()
-            _install_legacy_snapcraft(self.prefix)
 
     setup(
         name=name,
@@ -172,8 +139,7 @@ else:
         # non-cx_Freeze arguments
         entry_points={
             "console_scripts": [
-                # "snapcraft = snapcraft.cli.__main__:run",
-                "snapcraft-parser = snapcraft.internal.parser:main"
+                "snapcraft-parser = snapcraft.internal.parser:main",
             ]
         },
         # snapcraftctl is not in console_scripts because we need a clean environment
@@ -191,5 +157,4 @@ else:
         ],
         install_requires=["pysha3", "pyxdg", "requests"],
         test_suite="tests.unit",
-        cmdclass={"install": InstallLegacySnapcraft, "develop": DevelopLegacySnapcraft},
     )

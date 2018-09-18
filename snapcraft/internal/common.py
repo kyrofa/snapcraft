@@ -48,7 +48,7 @@ _DEFAULT_LIBRARIESDIR = os.path.join(sys.prefix, "share", "snapcraft", "librarie
 _librariesdir = _DEFAULT_LIBRARIESDIR
 _DEFAULT_EXTENSIONSDIR = os.path.join(sys.prefix, "share", "snapcraft", "extensions")
 _extensionsdir = _DEFAULT_EXTENSIONSDIR
-_DEFAULT_LEGACY_SNAPCRAFT_DIR = os.path.join(sys.prefix, "share", "legacy_snapcraft")
+_DEFAULT_LEGACY_SNAPCRAFT_DIR = os.path.join(sys.prefix, "legacy_snapcraft")
 _legacy_snapcraft_dir = _DEFAULT_LEGACY_SNAPCRAFT_DIR
 _DOCKERENV_FILE = "/.dockerenv"
 
