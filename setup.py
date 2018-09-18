@@ -130,36 +130,34 @@ else:
     from setuptools.command.develop import develop
     import subprocess
 
-    def _install_legacy_snapcraft(install_lib):
-        legacy_snapcraft_dir = os.path.join(
-            os.path.dirname(__file__), "vendor", "legacy_snapcraft"
-        )
+    def _install_legacy_snapcraft(prefix):
         subprocess.check_call(
             [
                 "pip",
                 "install",
-                "-r",
-                "{}/requirements.txt".format(legacy_snapcraft_dir),
-                "-r",
-                "{}/requirements-devel.txt".format(legacy_snapcraft_dir),
+                "snapcraft<3.0",
                 "--target",
-                "{}/snapcraft/legacy_snapcraft".format(install_lib),
-                legacy_snapcraft_dir,
+                "{}/share/legacy_snapcraft".format(prefix),
             ]
         )
 
     class DevelopLegacySnapcraft(develop):
         def run(self):
             super().run()
+
+            # The develop command doesn't get self.prefix filled out, so pull it out
+            # of config vars.
+            prefix = self.get_finalized_command('install').config_vars["prefix"]
+
             # Unfortunately, --target clashes with --editable, see
             # https://github.com/pypa/pip/issues/4390 for more information. Edits to
             # legacy should probably happen in the legacy branch anyway, though.
-            _install_legacy_snapcraft(self.install_dir)
+            _install_legacy_snapcraft(prefix)
 
     class InstallLegacySnapcraft(install):
         def run(self):
             super().run()
-            _install_legacy_snapcraft(self.install_lib)
+            _install_legacy_snapcraft(self.prefix)
 
     setup(
         name=name,
