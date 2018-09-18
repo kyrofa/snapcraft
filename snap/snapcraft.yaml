@@ -73,8 +73,22 @@ parts:
     # source: https://github.com/snapcore/snapcraft.git
     # source-branch: legacy
     requirements: requirements.txt
+    stage-packages:
+        - apt
+        - apt-transport-https
+        - apt-utils
+        - binutils
+        - execstack
+        - gpgv
+        - libffi6
+        - libsodium18
+        - patchelf
+        - squashfs-tools
+        - xdelta3
     override-build: |
         snapcraftctl build
         ./tools/snapcraft-override-build.sh
+
+        sed -ri 's|(lib/.*/site-packages)|legacy_snapcraft/\1|' $SNAPCRAFT_PART_INSTALL/usr/lib/python3.5/sitecustomize.py
     organize:
         '*': legacy_snapcraft/
