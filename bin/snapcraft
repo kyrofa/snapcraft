@@ -37,12 +37,18 @@ if os.path.isdir(common.get_legacy_snapcraft_dir()):
         with open(snapcraft_yaml_path, "r") as f:
             data = yaml_utils.load(f)
         if data.get("base") is None:
-            legacy_python = os.path.join(common.get_legacy_snapcraft_dir(), 'usr', 'bin', 'python3')
-            legacy_snapcraft = os.path.join(common.get_legacy_snapcraft_dir(), 'bin', 'snapcraft')
+            legacy_python = os.path.join(
+                common.get_legacy_snapcraft_dir(), "usr", "bin", "python3"
+            )
+            legacy_snapcraft = os.path.join(
+                common.get_legacy_snapcraft_dir(), "bin", "snapcraft"
+            )
             os.execv(legacy_python, [legacy_python, legacy_snapcraft] + sys.argv[1:])
     except Exception:
         # If there are issues loading/parsing the YAML, just pass off to the current version
         # where the error should be properly handled
         pass
 
-__import__("snapcraft.cli.__main__", fromlist=["__name__"], level=0).run()
+import snapcraft.cli.__main__
+
+snapcraft.cli.__main__.run()

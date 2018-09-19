@@ -13,6 +13,17 @@ apps:
     command: bin/snapcraft
     completer: snapcraft-completion
 
+build-packages:
+  - build-essential
+  - libapt-pkg-dev
+  - libffi-dev
+  - libssl-dev
+  - libsodium-dev
+  - liblzma-dev
+  - libyaml-dev
+  - patch
+  - sed
+
 parts:
   bash-completion:
     source: debian
@@ -23,17 +34,7 @@ parts:
     source: .
     plugin: python
     requirements: requirements.txt
-    build-packages:
-        - build-essential
-        - libapt-pkg-dev
-        - libffi-dev
-        - libssl-dev
-        - libsodium-dev
-        - liblzma-dev
-        - libyaml-dev
-        - patch
-        - sed
-    stage-packages:
+    stage-packages: &stage-packages
         - apt
         - apt-transport-https
         - apt-utils
@@ -61,22 +62,11 @@ parts:
 
   legacy-snapcraft:
     plugin: python
-    source: .
-    # source: https://github.com/snapcore/snapcraft.git
-    # source-branch: legacy
+    source: https://github.com/kyrofa/snapcraft.git
+    source-branch: feature/refactor_override_build
+    source-depth: 1
     requirements: requirements.txt
-    stage-packages:
-        - apt
-        - apt-transport-https
-        - apt-utils
-        - binutils
-        - execstack
-        - gpgv
-        - libffi6
-        - libsodium18
-        - patchelf
-        - squashfs-tools
-        - xdelta3
+    stage-packages: *stage-packages
     override-build: |
         snapcraftctl build
         ./tools/snapcraft-override-build.sh
