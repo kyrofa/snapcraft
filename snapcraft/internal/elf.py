@@ -249,7 +249,13 @@ class ElfFile:
 
             # If we are processing a detached debug info file, these
             # sections will be present but empty.
-            interp_section = elf.get_section_by_name(_INTERP)
+            try:
+                interp_section = elf.get_section_by_name(_INTERP)
+            except UnicodeDecodeError as e:
+                raise RuntimeError(
+                    "The file {!r} has weird section names: {}".format(path, str(e))
+                )
+
             if (
                 interp_section is not None
                 and interp_section.header.sh_type != "SHT_NOBITS"
